@@ -1,0 +1,72 @@
+import torch
+import torch.nn as nn
+import timm
+
+## TIMESTAMP @ 2025-04-10T23:45:47
+## author: phuocddat
+## start
+# very basic pipeline to work
+## end --
+
+class ViTAutoencoder(nn.Module):
+    def __init__(self, model_name='vit_base_patch16_224', pretrained=True):
+        super().__init__()
+        self.encoder = timm.create_model(model_name, pretrained=pretrained)
+        # Remove the classification head
+        self.encoder.head = nn.Identity()
+
+        embed_dim = self.encoder.embed_dim
+        num_patches = self.encoder.patch_embed.num_patches
+        self.num_patches_side = int(num_patches ** 0.5)
+
+        # Project ViT output back to a spatial feature map
+        self.proj = nn.Conv2d(embed_dim, 256, kernel_size=1)  # Reduce dimensionality
+
+        self.decoder = nn.Sequential(
+            nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1),  # 14x14 -> 28x28
+            nn.ReLU(),
+            nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),  # 28x28 -> 56x56
+            nn.ReLU(),
+            nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1),  # 56x56 -> 112x112
+            nn.ReLU(),
+            nn.ConvTranspose2d(32, 3, kernel_size=4, stride=2, padding=1),  # 112x112 -> 224x224
+            nn.Sigmoid()  # Output pixel values between 0 and 1
+        )
+
+        # Store normalization params for denormalization if needed for visualization/loss
+        self.norm_mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+        self.norm_std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+
+    def forward(self, x):
+        # x shape: (B, C, H, W) _ important to check
+        # Encode
+        features = self.encoder.forward_features(x)  # Get patch embeddings + cls token
+        print(features.shape)
+
+        # Process features for decoder
+        # Use only patch tokens
+        patch_tokens = features[:, 1:, :]  # Exclude CLS token: (B, num_patches, embed_dim)
+
+        B, N, E = patch_tokens.shape
+        H = W = self.num_patches_side
+        patch_tokens_spatial = patch_tokens.permute(0, 2, 1).reshape(B, E, H, W)
+
+        # Project and Decode
+        projected_features = self.proj(patch_tokens_spatial)
+        reconstructed_x = self.decoder(projected_features)
+        return reconstructed_x
+
+    def denormalize(self, x):
+        # x is the output of the sigmoid (0 to 1 range)
+        # Should check carefully...
+
+        if x.device != self.norm_mean.device:
+            self.norm_mean = self.norm_mean.to(x.device)
+            self.norm_std = self.norm_std.to(x.device)
+
+
+        #  output `x` needs denormalizing from standard norm space
+        denorm_x = x * self.norm_std + self.norm_mean
+        return torch.clamp(denorm_x, 0., 1.)  # Clamp to valid image range
+
+
