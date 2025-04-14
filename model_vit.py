@@ -99,7 +99,7 @@ class ViTAutoencoder(nn.Module):
         # x shape: (B, C, H, W) _ important to check
         # Encode
         features = self.encoder.forward_features(x)  # Get patch embeddings + cls token
-        print(features.shape)
+        #print(features.shape)
 
         # Process features for decoder
         # Use only patch tokens

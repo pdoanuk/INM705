@@ -23,9 +23,9 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from tqdm import tqdm
 
-from dataset import get_dataloader
+from dataset_mvtec import get_dataloader
 from model_vit import ViTAutoencoder
-from utils.utils import *
+from utils_mvtec import *
 from config import args, CLASS_NAMES, mean_train, std_train
 from matplotlib import pyplot as plt
 
@@ -34,8 +34,9 @@ from matplotlib import pyplot as plt
 
 log_run_time = datetime.datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
 save_dir= f"./saved_results/{log_run_time}"
-if not os.path.exists(args.save_dir):
-    os.makedirs(args.save_dir)
+os.makedirs(save_dir, exist_ok=True)
+# if not os.path.exists(args.save_dir):
+#     os.makedirs(save_dir, exist_ok=True)
 print(f"Saving to {save_dir}")
 log_path = os.path.join(save_dir, 'log_{}_{}.txt'.format(args.obj, args.model))
 log = open(log_path, 'w')
