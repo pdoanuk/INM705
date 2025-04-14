@@ -1,81 +1,205 @@
-import os
-from PIL import Image
-import torch
-from torch.utils.data import Dataset, DataLoader
-from torchvision import transforms
-import glob
-import numpy as np
-from dataset import MVTecDataset
-import torch.optim as optim
-from model_vit import ViTAutoencoder
-import torch
-import torch.nn as nn
-import timm
-from sklearn.metrics import roc_auc_score, f1_score, roc_curve
-import matplotlib.pyplot as plt
-from skimage.measure import label, regionprops
-
 ## TIMESTAMP @ 2025-04-10T23:45:47
 ## author: phuocddat
 ## start
 # very basic pipeline to work
 ## end --
 
+import datetime
+import os
+import copy
+import numpy as np
+import timm
+import torch
+import torch.cuda.amp as amp
+import torch.nn as nn
+import torch.optim as optim
 
+from easydict import EasyDict
+from scipy.ndimage import gaussian_filter
+from skimage.measure import label, regionprops
+from sklearn.metrics import roc_auc_score
+from sklearn.metrics import roc_auc_score, f1_score, roc_curve
+from torch.utils.data import Dataset, DataLoader
+from torchvision import transforms
+from tqdm import tqdm
+
+from dataset import get_dataloader
+from model_vit import ViTAutoencoder
+from utils.utils import *
+from config import args, CLASS_NAMES, mean_train, std_train
+from matplotlib import pyplot as plt
+
+# Set up default parameters
+
+
+log_run_time = datetime.datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+save_dir= f"./saved_results/{log_run_time}"
+if not os.path.exists(args.save_dir):
+    os.makedirs(args.save_dir)
+print(f"Saving to {save_dir}")
+log_path = os.path.join(save_dir, 'log_{}_{}.txt'.format(args.obj, args.model))
+log = open(log_path, 'w')
+print(f"Logging to {log_path}")
+
+random_seed = 42
+set_seed(random_seed)
+
+# Setup default working environment
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+scaler = amp.GradScaler()
+
+# Initiate model
 model = ViTAutoencoder().to(device)
+# Optimizer
+# optimizer = optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-5)
+optimizer = optim.Adam(params=model.parameters(),
+                       lr=args.lr,
+                       betas=(args.beta1, args.beta2)
+                       )
 criterion = nn.MSELoss()
-optimizer = optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-5)
-num_epochs = 50  # Adjust as needed
-root = '../data/mvtec/'
-category = 'bottle'
-train_dataset = MVTecDataset(root, category, is_train=True)
-test_dataset = MVTecDataset(root, category, is_train=False)
-train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True)
-test_loader = DataLoader(test_dataset, batch_size=8, shuffle=False)
 
-model.train()
-for epoch in range(num_epochs):
-    running_loss = 0.0
-    for i, (inputs, _) in enumerate(train_loader):  # Only need images for training
-        inputs = inputs.to(device)
+# Load data loaders
 
+train_data, val_data, test_data = get_dataloader(args)
+
+# Define train pipeline
+def train_pipeline(args, scaler, model, epoch, train_loader, optimizer, log):
+    model.train()
+    MSE = nn.MSELoss()
+
+    for (x, _, _) in tqdm(train_loader):
+        x = x.to(args.device)
         optimizer.zero_grad()
+        if args.amp:
+            with amp.autocast():
+                x_hat = model(x)
+                loss = MSE(x, x_hat)
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
 
-        outputs = model(inputs)
-        # Ensure inputs and outputs are compatible for loss (e.g., both normalized)
-        loss = criterion(outputs, inputs)  # MSE between normalized input and reconstruction
-        loss.backward()
-        optimizer.step()
-
-        running_loss += loss.item() * inputs.size(0)
-
-    epoch_loss = running_loss / len(train_loader.dataset)
-    print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {epoch_loss:.6f}")
-
-# Save the trained model weights
-torch.save(model.state_dict(), f'{category}_vit_ae_baseline.pth')
-print(f"Save complete.")
+    log_write('Train Epoch: {} | MSE Loss: {:.6f}'.format(epoch, loss), log)
 
 
-def calculate_pro_auc(anomaly_maps, ground_truth_masks):
-    aucs = []
-    # Normalize anomaly maps per image
-    max_vals = np.max(anomaly_maps.reshape(anomaly_maps.shape[0], -1), axis=1)[:, np.newaxis, np.newaxis, np.newaxis]
-    min_vals = np.min(anomaly_maps.reshape(anomaly_maps.shape[0], -1), axis=1)[:, np.newaxis, np.newaxis, np.newaxis]
-    norm_anomaly_maps = (anomaly_maps - min_vals) / (max_vals - min_vals + 1e-8)
+# Define validation pipeline
+def val_pipeline(args, model, epoch, val_loader, log):
+    model.eval()
+    MSE = nn.MSELoss()
 
-    for i in range(len(ground_truth_masks)):
-        gt = ground_truth_masks[i].flatten()
-        pred = norm_anomaly_maps[i].flatten()
-        # Only calculate if there is an anomaly in ground truth
-        if np.sum(gt) > 0:
-            try:
-                aucs.append(roc_auc_score(gt, pred))
-            except ValueError: # Handle cases with only one class in gt (shouldn't happen if sum(gt)>0)
-                 aucs.append(0.0) # Or handle appropriately
+    for (x, _, _) in tqdm(val_loader):
+        x = x.to(args.device)
+        with torch.no_grad():
+            x_hat = model(x)
+            loss = MSE(x, x_hat)
 
-    return np.mean(aucs) if aucs else 0.0 #
+    log_write(('Valid Epoch: {} | MSE Loss: {:.6f}'.format(epoch, loss)), log)
+
+    return loss, model
+
+# Define export visualisation for debug procedure
+def save_debug_image(test_loader, test_imgs, recon_imgs, mean, std, seg_scores, gt_mask_list):
+    for num in range(len(test_loader)):
+        if num in [5, 10, 15]:
+            if test_imgs[num].dtype != "uint8":
+                test_imgs[num] = denormalization(test_imgs[num], mean, std)
+
+            if recon_imgs[num].dtype != "uint8":
+                recon_imgs[num] = denormalization(recon_imgs[num], mean, std)
+
+            scores_img = seg_scores[num]
+            fig, plots = plt.subplots(1, 4)
+            fig.set_figwidth(9)
+            fig.set_tight_layout(True)
+            plots = plots.reshape(-1)
+            plots[0].imshow(test_imgs[num])
+            plots[1].imshow(recon_imgs[num])
+            plots[2].imshow(scores_img, cmap='jet', alpha=0.35)
+            plots[3].imshow(gt_mask_list[num], cmap=plt.cm.gray)
+
+            plots[0].set_title("Real image:")
+            plots[1].set_title("Reconstructed image")
+            plots[2].set_title("Anomaly map")
+            plots[3].set_title("GT mask")
+            plt.savefig(f"{save_dir}/test_image_{args.model}_{args.obj}_{num}.png")
 
 
-# Image-level AUROC
+def full_test_pipeline(model, test_loader):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.eval()
+    MSE = nn.MSELoss(reduction='none')
+    det_scores, seg_scores = [],[]
+    test_imgs = []
+    gt_list = []
+    gt_mask_list = []
+    recon_imgs = []
+
+    det_sig, seg_sig = 15,6
+    for (x, label, mask) in tqdm(test_loader):
+        mask = mask.squeeze(0)
+        test_imgs.extend(x.cpu().numpy())
+        gt_list.extend(label.cpu().numpy())
+        gt_mask_list.extend(mask.cpu().numpy())
+        score = 0
+        with torch.no_grad():
+            x = x.to(device)
+            x_hat = model(x)
+            mse = MSE(x,x_hat)
+            score = mse
+
+        score = score.cpu().numpy()
+        score = score.mean(1) #
+
+        det_score, seg_score = copy.deepcopy(score), copy.deepcopy(score)
+
+        for i in range(det_score.shape[0]):
+            det_score[i] = gaussian_filter(det_score[i], sigma=det_sig)
+        det_scores.extend(det_score)
+
+        for i in range(seg_score.shape[0]):
+            seg_score[i] = gaussian_filter(seg_score[i], sigma=seg_sig)
+        seg_scores.extend(seg_score)
+
+        recon_imgs.extend(x_hat.cpu().numpy())
+    return det_scores, seg_scores, test_imgs, recon_imgs, gt_list, gt_mask_list
+
+
+# Start training procedure
+
+for epoch in range(1, args.epochs + 1):
+    log_write('Epoch: {:3d}/{:3d} '.format(epoch, args.epochs), log)
+    train_pipeline(args=args,
+                   scaler=scaler,
+                   model=model,
+                   epoch=epoch,
+                   train_loader=train_data,
+                   optimizer=optimizer,
+                   log=log)
+
+    if epoch % 10 == 0:
+        val_loss, save_model = val_pipeline(args=args, model=model, epoch=epoch, val_loader=val_data, log=log)
+
+
+log.close()
+final_model_name = os.path.join(save_dir, 'model_{}_{}_final_epoch_model.pt'.format(args.obj, args.model))
+torch.save(save_model.state_dict(), final_model_name)
+# Release model
+model = None
+## Reload model for evaluating and testing
+model_eval = ViTAutoencoder()
+model_eval.load_state_dict(torch.load(final_model_name))
+model_eval.to(device)
+
+# Get test in processing
+det_scores, seg_scores, test_imgs, recon_imgs, gt_list, gt_mask_list = full_test_pipeline(model= model_eval,
+                                                                                          test_loader=test_data)
+
+seg_scores = np.asarray(seg_scores)
+max_anomaly_score = seg_scores.max()
+min_anomaly_score = seg_scores.min()
+seg_scores = (seg_scores - min_anomaly_score) / (max_anomaly_score - min_anomaly_score)
+
+gt_mask = np.asarray(gt_mask_list)
+gt_mask = gt_mask.astype('int')
+per_pixel_rocauc = roc_auc_score(gt_mask.flatten(), seg_scores.flatten())
+print('pixel ROCAUC: %.2f' % (per_pixel_rocauc))
+
