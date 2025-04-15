@@ -9,7 +9,7 @@ std_train = [0.229, 0.224, 0.225]
 
 args = EasyDict({
     'n_gpu':1,
-    'image_size':224,
+    'image_size':384,
     'patch_size':16,
     'device':'cuda',
     'batch_size':16,
