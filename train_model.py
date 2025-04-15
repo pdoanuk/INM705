@@ -7,6 +7,7 @@
 import datetime
 import os
 import copy
+import time
 import numpy as np
 import timm
 import torch
@@ -29,39 +30,7 @@ from utils_mvtec import *
 from config import args, CLASS_NAMES, mean_train, std_train
 from matplotlib import pyplot as plt
 
-# Set up default parameters
 
-
-log_run_time = datetime.datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
-save_dir= f"./saved_results/{log_run_time}"
-os.makedirs(save_dir, exist_ok=True)
-# if not os.path.exists(args.save_dir):
-#     os.makedirs(save_dir, exist_ok=True)
-print(f"Saving to {save_dir}")
-log_path = os.path.join(save_dir, 'log_{}_{}.txt'.format(args.obj, args.model))
-log = open(log_path, 'w')
-print(f"Logging to {log_path}")
-
-random_seed = 42
-set_seed(random_seed)
-
-# Setup default working environment
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-scaler = amp.GradScaler()
-
-# Initiate model
-model = ViTAutoencoder().to(device)
-# Optimizer
-# optimizer = optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-5)
-optimizer = optim.Adam(params=model.parameters(),
-                       lr=args.lr,
-                       betas=(args.beta1, args.beta2)
-                       )
-criterion = nn.MSELoss()
-
-# Load data loaders
-
-train_data, val_data, test_data = get_dataloader(args)
 
 # Define train pipeline
 def train_pipeline(args, scaler, model, epoch, train_loader, optimizer, log):
@@ -164,8 +133,41 @@ def full_test_pipeline(model, test_loader):
     return det_scores, seg_scores, test_imgs, recon_imgs, gt_list, gt_mask_list
 
 
-# Start training procedure
 
+# Set up default parameters
+
+log_run_time = datetime.datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+root_save_dir = args.save_dir
+save_dir= f"{root_save_dir}/{log_run_time}"
+os.makedirs(save_dir, exist_ok=True)
+
+log_path = os.path.join(save_dir, 'log_{}_{}.txt'.format(args.obj, args.model))
+log = open(log_path, 'w')
+print(f"Logging to {log_path}")
+
+random_seed = 42
+set_seed(random_seed)
+
+# Setup default working environment
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+scaler = amp.GradScaler()
+
+# Initiate model
+model = ViTAutoencoder().to(device)
+# Optimizer
+# optimizer = optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-5)
+optimizer = optim.Adam(params=model.parameters(),
+                       lr=args.lr,
+                       betas=(args.beta1, args.beta2)
+                       )
+criterion = nn.MSELoss()
+
+# Load data loaders
+
+train_data, val_data, test_data = get_dataloader(args)
+
+# Start training procedure
+# Run for 1 subject
 for epoch in range(1, args.epochs + 1):
     log_write('Epoch: {:3d}/{:3d} '.format(epoch, args.epochs), log)
     train_pipeline(args=args,
@@ -180,7 +182,6 @@ for epoch in range(1, args.epochs + 1):
         val_loss, save_model = val_pipeline(args=args, model=model, epoch=epoch, val_loader=val_data, log=log)
 
 
-log.close()
 final_model_name = os.path.join(save_dir, 'model_{}_{}_final_epoch_model.pt'.format(args.obj, args.model))
 torch.save(save_model.state_dict(), final_model_name)
 # Release model
@@ -202,5 +203,104 @@ seg_scores = (seg_scores - min_anomaly_score) / (max_anomaly_score - min_anomaly
 gt_mask = np.asarray(gt_mask_list)
 gt_mask = gt_mask.astype('int')
 per_pixel_rocauc = roc_auc_score(gt_mask.flatten(), seg_scores.flatten())
-print('pixel ROCAUC: %.2f' % (per_pixel_rocauc))
+log_write('ROC AUC of pixel: %.2f' % (per_pixel_rocauc), log)
 
+save_debug_image(test_loader=test_data,
+                 test_imgs=test_imgs,
+                 recon_imgs=recon_imgs,
+                 mean=mean_train,
+                 std=std_train,
+                 seg_scores=seg_scores,
+                 gt_mask_list=gt_mask_list)
+
+log.close()
+# Run full dataset======================================
+
+# save_dir = f"./saved_results/{log_run_time}"
+# os.makedirs(save_dir, exist_ok=True)
+print(f"Start training complete list.")
+item_list = CLASS_NAMES
+
+for item_obj in item_list:
+    start_time_epoch = time.time()
+    device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+    # Reset log
+    # Set up default parameters
+    log_run_time = datetime.datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+    log_path = os.path.join(save_dir, 'log_{}_{}_{}.txt'.format(args.obj, args.model, log_run_time))
+    log = open(log_path, 'w')
+    print(f"Logging to {log_path}")
+    log_write(f"Starting to train {item_obj}...", log)
+
+    random_seed = 42
+    set_seed(random_seed)
+    args.epochs = 100 # override value of epoch
+    # Setup default working environment
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    scaler = amp.GradScaler()
+
+    # Initiate model
+    model = ViTAutoencoder().to(device)
+    # Optimizer
+    # optimizer = optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-5)
+    optimizer = optim.Adam(params=model.parameters(),
+                           lr=args.lr,
+                           betas=(args.beta1, args.beta2)
+                           )
+    criterion = nn.MSELoss()
+
+    # Load data loaders
+
+    train_data, val_data, test_data = get_dataloader(args)
+
+    # Start training procedure
+    # Run for 1 subject
+    for epoch in range(1, args.epochs + 1):
+        log_write('Epoch: {:3d}/{:3d} '.format(epoch, args.epochs), log)
+        train_pipeline(args=args,
+                       scaler=scaler,
+                       model=model,
+                       epoch=epoch,
+                       train_loader=train_data,
+                       optimizer=optimizer,
+                       log=log)
+
+        if epoch % 10 == 0:
+            val_loss, save_model = val_pipeline(args=args, model=model, epoch=epoch, val_loader=val_data, log=log)
+
+
+    final_model_name = os.path.join(save_dir, 'model_{}_{}_final_epoch_model.pt'.format(args.obj, args.model))
+    torch.save(save_model.state_dict(), final_model_name)
+    log_write(f"Saving to {final_model_name}", log)
+    # Release model
+    model = None
+    ## Reload model for evaluating and testing
+    model_eval = ViTAutoencoder()
+    model_eval.load_state_dict(torch.load(final_model_name))
+    model_eval.to(device)
+
+    # Get test in processing
+    det_scores, seg_scores, test_imgs, recon_imgs, gt_list, gt_mask_list = full_test_pipeline(model=model_eval,
+                                                                                              test_loader=test_data)
+
+    seg_scores = np.asarray(seg_scores)
+    max_anomaly_score = seg_scores.max()
+    min_anomaly_score = seg_scores.min()
+    seg_scores = (seg_scores - min_anomaly_score) / (max_anomaly_score - min_anomaly_score)
+
+    gt_mask = np.asarray(gt_mask_list)
+    gt_mask = gt_mask.astype('int')
+    per_pixel_rocauc = roc_auc_score(gt_mask.flatten(), seg_scores.flatten())
+    log_write('ROC AUC of pixel: %.2f' % (per_pixel_rocauc), log)
+    log_write(f"generate debug images...", log)
+    save_debug_image(test_loader=test_data,
+                     test_imgs=test_imgs,
+                     recon_imgs=recon_imgs,
+                     mean=mean_train,
+                     std=std_train,
+                     seg_scores=seg_scores,
+                     gt_mask_list=gt_mask_list)
+
+    log_write(f"Completed training & testing {item_obj}., model path {final_model_name}", log)
+    log_write(f"Total time: {time.time() - start_time_epoch}", log)
+    log.close()
