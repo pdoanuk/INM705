@@ -6,7 +6,65 @@ import timm
 ## author: phuocddat
 ## start
 # very basic pipeline to work
-## end --
+## end -
+
+class DecoderExp(nn.Module):
+    def __init__(self, args):
+        super(DecoderExp, self).__init__()
+        self.args = args
+        self.image_size = self.args.image_size
+        self.patch_size = self.args.patch_size
+
+        self.blk_in = nn.Sequential(
+            nn.Conv2d(256, 128, kernel_size=3, stride=1, padding=1),
+            nn.InstanceNorm2d(128),
+            nn.ReLU(),
+        )
+        self.blk_inter_128 = nn.Sequential(
+            nn.Conv2d(128, 64, kernel_size=3, stride=1, padding=1),
+            nn.InstanceNorm2d(64),
+            nn.ReLU(),
+        )
+        self.blk_inter_64 = nn.Sequential(
+            nn.Conv2d(64, 32, kernel_size=3, stride=1, padding=1),
+            nn.InstanceNorm2d(32),
+            nn.ReLU(),
+        )
+        self.blk_inter_32 = nn.Sequential(
+            nn.Conv2d(32, 16, kernel_size=3, stride=1, padding=1),
+            nn.InstanceNorm2d(16),
+            nn.ReLU(),
+        )
+        self.blk_inter_16 = nn.Sequential(
+            nn.Conv2d(16, 8, kernel_size=3, stride=1, padding=1),
+            nn.InstanceNorm2d(8),
+            nn.ReLU(),
+        )
+        self.blk_inter_8 = nn.Sequential(
+            nn.Conv2d(8, 4, kernel_size=3, stride=1, padding=1),
+            nn.InstanceNorm2d(4),
+            nn.ReLU(),
+        )
+        self.upscale = nn.UpsamplingBilinear2d(self.image_size, self.image_size)
+        self.tanh = nn.Tanh()
+
+    def forward(self, input_x):
+        x = input_x[:, 1:, :]
+        x = x.tranponse(1, 2)
+        x = x.reshape(input_x.shape[0], -1,
+                      self.image_size//self.patch_size,
+                      self.image_size//self.patch_size)
+        x = self.blk_in(x)
+        x = self.blk_inter_128(x)
+        x = self.blk_inter_64(x)
+        x = self.blk_inter_32(x)
+        x = self.blk_inter_16(x)
+        x = self.blk_inter_8(x)
+        x = self.upscale(x)
+        x = self.tanh(x)
+        return x
+
+
 
 class ViTAutoencoder(nn.Module):
     def __init__(self, model_name='vit_base_patch16_224', pretrained=True):
@@ -41,7 +99,7 @@ class ViTAutoencoder(nn.Module):
         # x shape: (B, C, H, W) _ important to check
         # Encode
         features = self.encoder.forward_features(x)  # Get patch embeddings + cls token
-        print(features.shape)
+        #print(features.shape)
 
         # Process features for decoder
         # Use only patch tokens
