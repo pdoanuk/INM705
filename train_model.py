@@ -8,6 +8,8 @@ import datetime
 import os
 import copy
 import time
+import sys
+import shutil
 import numpy as np
 import timm
 import torch
@@ -30,6 +32,45 @@ from utils_mvtec import *
 from config import args, CLASS_NAMES, mean_train, std_train
 from matplotlib import pyplot as plt
 from torchinfo import summary
+## wandb logging
+import wandb
+from wandb.sdk.lib.runid import generate_id
+
+
+def instantiate_logger() -> Logger:
+    """Instantiate a logger
+
+    Returns:
+        Logger: Logger
+    """
+    logger = Logger(
+        level=self.default_conf["logging"]["level"].upper(),
+        log_dir=Path(self.run_conf["logging"]["log_dir"]).resolve(),
+        comment="logs",
+        use_timestamp=False,
+    )
+    logger = logger.create_logger()
+    return logger
+
+## Setting up wandb
+
+currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
+parentdir = os.path.dirname(currentdir)
+sys.path.insert(0, parentdir)
+
+wandb_run_id = generate_id()
+run_name = f"{datetime.datetime.now().strftime('%Y-%m-%dT%H%M%S')}_extra_comment"
+# Initialize wandb
+run = wandb.init(
+    project = "INM705-exp",
+    tags = "experiment",
+    name = run_name,
+    id = wandb_run_id,
+    dir= args,
+    mode= "online",
+    settings= wandb.Settings(start_method="fork")
+
+)
 
 
 # Define train pipeline
