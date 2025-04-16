@@ -50,9 +50,32 @@ class VitDecoderExp(nn.Module):
             nn.InstanceNorm2d(3),
             nn.ReLU(True),
 
-            # nn.Conv2d(8, 4, kernel_size=3, stride=1, padding=1),
-            # nn.InstanceNorm2d(4),
-            # nn.ReLU()
+        )
+
+        self.decoder_bano2d = nn.Sequential(
+            ## Block 1
+            nn.ConvTranspose2d(768, 256, kernel_size=3),
+            nn.InstanceNorm2d(256),
+            nn.ReLU(True),
+            ## Block 2
+            nn.ConvTranspose2d(256, 128, kernel_size=3),
+            nn.InstanceNorm2d(128),
+            nn.ReLU(True),
+            ## Block 3
+            nn.ConvTranspose2d(128, 64, kernel_size=3),
+            nn.InstanceNorm2d(64),
+            nn.ReLU(True),
+
+            nn.ConvTranspose2d(64, 32, kernel_size=3, stride=2, padding=1),
+            nn.InstanceNorm2d(32),
+            nn.ReLU(True),
+
+            nn.ConvTranspose2d(32, 16, kernel_size=3, stride=2, padding=1),
+            nn.InstanceNorm2d(16),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(16, 3, kernel_size=3, stride=2, padding=1),
+            nn.InstanceNorm2d(3),
+            nn.ReLU(True),
 
         )
 
@@ -151,4 +174,3 @@ class ViTAutoencoder(nn.Module):
         return torch.clamp(denorm_x, 0., 1.)  # Clamp to valid image range
 
 
-# class VitModel(nn.Module):
