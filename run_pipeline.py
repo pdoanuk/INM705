@@ -4,7 +4,8 @@ MVTec AD Anomaly Detection Training and Evaluation Pipeline
 Using Vision Transformer (ViT) Encoder-Decoder Variants.
 
 TIMESTAMP @ 2025-04-10T23:45:47
-author: phuocddat (Refactored)
+author: phuocddat
+update losses
 """
 
 
@@ -28,6 +29,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from torchinfo import summary
 from typing import Tuple, List, Dict, Any, Optional
+from losses import L2Loss, L1Loss, CosLoss
 
 
 try:
@@ -154,7 +156,8 @@ def evaluate_performance(
 ) -> Tuple[float, float]:
     """Runs the full test evaluation pipeline."""
     model.eval()
-    mse_loss_func = nn.MSELoss(reduction='none') # Per-pixel MSE for anomaly maps
+    # mse_loss_func = nn.MSELoss(reduction='none') # Per-pixel MSE for anomaly maps
+    mse_loss_func = L2Loss(reduction='none')
 
     det_scores, seg_scores = [], []
     test_imgs_list, gt_list, gt_mask_list, recon_imgs_list = [], [], [], []
@@ -338,7 +341,9 @@ def run_experiment(
     # --- Model, Optimizer, Criterion, Scaler ---
     model = get_model(device)
     optimizer = get_optimizer(model)
-    criterion = nn.MSELoss()
+    # criterion = nn.MSELoss()
+    criterion = L2Loss()
+
     scaler = amp.GradScaler(enabled=args.amp)
 
     # --- Training Loop ---

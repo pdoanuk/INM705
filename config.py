@@ -42,6 +42,3 @@ args = EasyDict({
 
 })
 
-config_logging = EasyDict({
-
-})
