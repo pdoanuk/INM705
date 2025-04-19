@@ -42,6 +42,13 @@ def vit_small_patch16_224_dino(pretrained=True, **kwargs):
     model_kwargs = dict(patch_size=16, embed_dim=384, depth=12, num_heads=6)
     model_kwargs.update(kwargs)
     return _create_vision_transformer('vit_small_patch16_224.dino', pretrained=pretrained, **model_kwargs)
+
+def vit_base_patch16_224(pretrained=True, **kwargs):
+    model_kwargs = dict(patch_size=16, embed_dim=768, depth=12, num_heads=12)
+    model_kwargs.update(kwargs)
+    return _create_vision_transformer('vit_base_patch16_224.augreg_in21k_ft_in1k', pretrained=pretrained,
+                                      **model_kwargs)
+
 # ========== Fusion ==========
 class Fusion(nn.Module):
     def __init__(self, dim, mul):
@@ -74,7 +81,6 @@ class Fusion(nn.Module):
 
 
 def fusion(pretrained=False, **kwargs):
-    # pretrained flag is ignored for Fusion
     model = Fusion(**kwargs)
     return model
 
@@ -281,17 +287,12 @@ def _create_decoder(base_kwargs, **kwargs):
     # Helper to create ViT_Decoder instance
     model_kwargs = base_kwargs.copy()
     depth = kwargs.pop('depth')  # Decoder depth must be specified
-    # Infer decoder_seq_len if possible from img_size and patch_size
-    # This assumes the decoder input features correspond to the full patch grid
     img_size = kwargs.get('img_size', 256)  # Assume default or get from kwargs
     patch_size = model_kwargs.get('patch_size', 16)  # Get from base_kwargs
     grid_size = (img_size // patch_size, img_size // patch_size)
-    # decoder_seq_len = grid_size[0] * grid_size[1]
-    # model_kwargs['decoder_seq_len'] = decoder_seq_len
-    # print(f"Inferred decoder sequence length: {decoder_seq_len} (Grid: {grid_size})")
 
-    model_kwargs.update(kwargs)  # Merge remaining kwargs (students, etc.)
-    model_kwargs['depth'] = depth  # Set the specific decoder depth
+    model_kwargs.update(kwargs)
+    model_kwargs['depth'] = depth
 
     return ViT_Decoder(**model_kwargs)
 
