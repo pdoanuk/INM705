@@ -394,31 +394,28 @@ def run_experiment(
     logger.info(f"Starting training for {args.epochs} epochs...")
     for epoch in range(1, args.epochs + 1):
         train_loss = train_epoch(args, model, train_loader, optimizer, criterion, scaler, device, epoch)
-        val_loss = validate_epoch(args, model, val_loader, criterion, device, epoch) # Validate every epoch
-
-        log_dict = {
-            f"{class_name}/train_loss": train_loss,
-            f"{class_name}/val_loss": val_loss,
-            "epoch": epoch
-        }
-        # Simple print for epoch summary
-        print(f"Epoch {epoch}/{args.epochs} => Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}")
-
-        # Log metrics to WandB (if enabled)
-        if wandb_run:
-            wandb.log(log_dict)
-
-        # Simple best model saving based on validation loss
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            epochs_without_improvement = 0
-            # Save the best model checkpoint
-            torch.save(model.state_dict(), best_model_path)
-            logger.info(f"Validation loss improved to {val_loss:.6f}. Saved best model to {best_model_path}")
-        else:
-            epochs_without_improvement += 1
 
         if epoch % args.val_epochs == 0:
+            val_loss = validate_epoch(args, model, val_loader, criterion, device, epoch)
+            # Log metrics to WandB (if enabled)
+            if wandb_run:
+                wandb.log({
+                    f"{class_name}_train_loss": train_loss,
+                    f"{class_name}_val_loss": val_loss,
+                    "epoch": epoch  # Log global epoch step if needed, or per-class epoch
+                })
+
+            # Simple best model saving based on validation loss
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                epochs_without_improvement = 0
+                # Save the best model checkpoint
+                best_model_path = current_save_dir / f"model_{class_name}_{args.model}_best.pt"
+                torch.save(model.state_dict(), best_model_path)
+                print(f"Validation loss improved to {val_loss:.6f}. Saved best model to {best_model_path}")
+            else:
+                epochs_without_improvement += 1
+            # debug images here
             eval_metrics = evaluate_performance(
                 model=model,
                 test_loader=test_loader,
@@ -428,9 +425,47 @@ def run_experiment(
                 class_name=class_name,
                 evaluator=evaluator  # Pass the evaluator instance
             )
-        if 0 < args.early_stopping_patience <= epochs_without_improvement:
-            logger.info(f"Early stopping triggered after {epoch} epochs.")
-            break
+
+            if 0 < args.early_stopping_patience <= epochs_without_improvement:
+                print(f"Early stopping triggered after {epoch} epochs.")
+                break
+
+        else:
+            if wandb_run:
+                wandb.log({
+                    f"{class_name}_train_loss": train_loss,
+                    "epoch": epoch  # Log global epoch step if needed, or per-class epoch
+                })
+
+        # val_loss = validate_epoch(args, model, val_loader, criterion, device, epoch) # Validate every epoch
+        #
+        # log_dict = {
+        #     f"{class_name}/train_loss": train_loss,
+        #     f"{class_name}/val_loss": val_loss,
+        #     "epoch": epoch
+        # }
+        # # Simple print for epoch summary
+        # print(f"Epoch {epoch}/{args.epochs} => Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}")
+        #
+        # # Log metrics to WandB (if enabled)
+        # if wandb_run:
+        #     wandb.log(log_dict)
+        #
+        # # Simple best model saving based on validation loss
+        # if val_loss < best_val_loss:
+        #     best_val_loss = val_loss
+        #     epochs_without_improvement = 0
+        #     # Save the best model checkpoint
+        #     torch.save(model.state_dict(), best_model_path)
+        #     logger.info(f"Validation loss improved to {val_loss:.6f}. Saved best model to {best_model_path}")
+        # else:
+        #     epochs_without_improvement += 1
+
+        # if epoch % args.val_epochs == 0:
+
+        # if 0 < args.early_stopping_patience <= epochs_without_improvement:
+        #     logger.info(f"Early stopping triggered after {epoch} epochs.")
+        #     break
 
 
     logger.info("Training finished.")
