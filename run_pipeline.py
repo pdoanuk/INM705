@@ -65,14 +65,18 @@ def get_model(device: torch.device) -> nn.Module:
 
 def get_optimizer(model: nn.Module) -> optim.Optimizer:
     """Instantiates and returns the optimizer."""
-    # optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay) # Example AdamW
-    optimizer = optim.Adam(
-        params=model.parameters(),
-        lr=args.lr,
-        betas=(args.beta1, args.beta2)
-    )
+    # optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+
+    optimizer = optim.AdamW(model.parameters(), betas=(0.9, 0.999), lr=args.lr, weight_decay=args.weight_decay, amsgrad=False)
+
+    # optimizer = optim.Adam(
+    #     params=model.parameters(),
+    #     lr=args.lr,
+    #     betas=(args.beta1, args.beta2)
+    # )
     print(f"Using optimizer: {optimizer.__class__.__name__} with LR: {args.lr}")
     return optimizer
+
 
 def train_epoch(
     args: Any,
@@ -157,7 +161,8 @@ def evaluate_performance(
     """Runs the full test evaluation pipeline."""
     model.eval()
     # mse_loss_func = nn.MSELoss(reduction='none') # Per-pixel MSE for anomaly maps
-    mse_loss_func = L2Loss(reduction='none')
+    # mse_loss_func = L2Loss(reduction='none')
+    mse_loss_func = CosLoss()
 
     det_scores, seg_scores = [], []
     test_imgs_list, gt_list, gt_mask_list, recon_imgs_list = [], [], [], []
@@ -342,7 +347,8 @@ def run_experiment(
     model = get_model(device)
     optimizer = get_optimizer(model)
     # criterion = nn.MSELoss()
-    criterion = L2Loss()
+    #criterion = L2Loss()
+    criterion = CosLoss()
 
     scaler = amp.GradScaler(enabled=args.amp)
 
@@ -458,6 +464,7 @@ if __name__ == "__main__":
             wandb_run = wandb.init(
                 project=WANDB_PROJECT_NAME,
                 name=run_name,
+                notes=args.log_comment,
                 tags=WANDB_TAGS + [args.model, args.obj],
                 config=vars(args), # Log all arguments from config
                 dir=str(base_save_dir), # Set wandb log directory
