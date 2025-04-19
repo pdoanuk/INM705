@@ -64,7 +64,7 @@ logger = logging.getLogger(__name__)
 def get_model(device: torch.device) -> nn.Module:
     """Instantiates and returns the anomaly detection model."""
     model = load_default_model().to(device)
-    logger.info(f"Using model: {model.__class__.__name__}")
+    logger.info(f"Using model: {model.__class__.__name__} loading on {device}")
     try:
         # Debug model summary
         summary(model, input_size=(args.batch_size, 3, args.image_size, args.image_size))
@@ -74,11 +74,14 @@ def get_model(device: torch.device) -> nn.Module:
 
 def get_optimizer(model: nn.Module) -> optim.Optimizer:
     """Instantiates and returns the optimizer."""
-    optimizer = optim.Adam(
-        params=model.parameters(),
-        lr=args.lr,
-        betas=(args.beta1, args.beta2)
-    )
+    # optimizer = optim.Adam(
+    #     params=model.parameters(),
+    #     lr=args.lr,
+    #     betas=(args.beta1, args.beta2)
+    # )
+
+    optimizer = optim.AdamW(model.parameters(), betas=(0.9, 0.999), lr=args.lr, weight_decay=args.weight_decay,
+                            amsgrad=False)
     logger.info(f"Using optimizer: {optimizer.__class__.__name__} with LR: {args.lr}")
     return optimizer
 
@@ -477,23 +480,25 @@ def run_experiment(
 
     # --- Evaluation ---
     # Load the best model for evaluation
-    if best_model_path.exists():
-        logger.info(f"Loading best model from {best_model_path} for evaluation...")
-        load_path = best_model_path
-    else:
-        logger.warning(f"Best model checkpoint not found at {best_model_path}. Using final model for evaluation.")
-        load_path = final_model_path
-
-    # Re-instantiate model structure and load state dict
-    eval_model = get_model(device) # Get a fresh instance
-    try:
-        eval_model.load_state_dict(torch.load(load_path, map_location=device))
-    except Exception as e:
-        logger.error(f"Failed to load model state dict from {load_path}: {e}")
-        return {"class": class_name, "status": "failed", "error": f"Model loading failed: {e}"}
-
+    # Option1: load model from path
+    # if best_model_path.exists():
+    #     logger.info(f"Loading best model from {best_model_path} for evaluation...")
+    #     load_path = best_model_path
+    # else:
+    #     logger.warning(f"Best model checkpoint not found at {best_model_path}. Using final model for evaluation.")
+    #     load_path = final_model_path
+    #
+    # # Re-instantiate model structure and load state dict
+    # eval_model = get_model(device) # Get a fresh instance
+    # try:
+    #     eval_model.load_state_dict(torch.load(load_path, map_location=device))
+    # except Exception as e:
+    #     logger.error(f"Failed to load model state dict from {load_path}: {e}")
+    #     return {"class": class_name, "status": "failed", "error": f"Model loading failed: {e}"}
+    logger.info("\n" + "="*50)
+    logger.info(f"Full evaluation of model based on current instance")
     eval_metrics = evaluate_performance(
-        model=eval_model,
+        model=model,
         test_loader=test_loader,
         epoch_number= None,
         # criterion=criterion, # Not needed directly if using features
