@@ -151,12 +151,27 @@ def get_dataloader(args):
         transform_x=testT,
     )
 
-    train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=args.batch_size, sampler=train_sampler
-    )
-    val_loader = torch.utils.data.DataLoader(
-        valid_dataset, batch_size=args.batch_size, sampler=valid_sampler
-    )
-    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=1, shuffle=False)
+    # train_loader = torch.utils.data.DataLoader(
+    #     train_dataset, batch_size=args.batch_size, sampler=train_sampler
+    # )
+    # val_loader = torch.utils.data.DataLoader(
+    #     valid_dataset, batch_size=args.batch_size, sampler=valid_sampler
+    # )
+    # test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=1, shuffle=False)
+    train_loader = DataLoader(train_dataset,
+                              batch_size=args.batch_size,
+                              shuffle=True,
+                              num_workers=4,
+                              pin_memory=True, drop_last=True)
+    val_loader = DataLoader(valid_dataset,
+                            batch_size=args.batch_size,
+                            shuffle=False,
+                            num_workers=4,
+                            pin_memory=True)
+    test_loader = DataLoader(test_dataset,
+                             batch_size=args.batch_size,
+                             shuffle=False,
+                             num_workers=4,
+                             pin_memory=True)
 
     return train_loader, val_loader, test_loader
