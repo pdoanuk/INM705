@@ -487,7 +487,7 @@ def load_default_model(device=None):
     teacher_patch_size = 16
     grid_size = image_size // teacher_patch_size
     if device is None:
-        device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+        device = 'cpu'
 
     model_t_cfg = {
         'name': 'vit_small_patch16_224_dino',
@@ -557,7 +557,7 @@ if __name__ == '__main__':
     # --- Configuration Setup ---
     bs = 2
     image_size = 256
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
     # Ensure input tensor is on the correct device
     x = torch.randn(bs, 3, image_size, image_size, device=device)
 
