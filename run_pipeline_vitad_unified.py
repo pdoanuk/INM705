@@ -29,7 +29,8 @@ from typing import Tuple, List, Dict, Any, Optional, Union
 
 # --- Local Imports ---
 try:
-    from dataset_mvtec import get_dataloader
+    from dataset_mvtec import get_dataloader, get_loader_full
+    # from dataset_mvtec import get_loader_full
     from model_vitad import load_default_model # Using ViTAD model with manual loading function
     from losses import L2Loss # L1Loss, CosLoss also available
     from utils_mvtec import set_seed, denormalization, log_write # Keep utility functions
@@ -343,13 +344,14 @@ def run_experiment(
     args: Any,
     class_name: str,
     base_save_dir: Path,
+    model: Union[nn.Module, None],
     device: torch.device,
     wandb_run: Optional[wandb.sdk.wandb_run.Run] = None
 ) -> Dict[str, Any]:
     """Runs the full training and evaluation pipeline for a single class."""
 
     logger.info("\n" + "="*50)
-    logger.info(f" Starting Experiment for Class: {class_name} ")
+    logger.info(f" Starting Experiment for Class: {class_name} :: {args.obj}")
     logger.info("="*50 + "\n")
 
     start_time = time.time()
@@ -374,7 +376,7 @@ def run_experiment(
         return {"class": class_name, "status": "failed", "error": str(e)}
 
     # --- Model, Optimizer, Criterion, Scaler ---
-    model = get_model(device)
+    model = get_model(device) if model is None else model
     optimizer = get_optimizer(model)
     # Using L2Loss between features as per ViTAD approach
     criterion = L2Loss()
@@ -512,7 +514,7 @@ def run_experiment(
     duration = end_time - start_time
     logger.info(f"Experiment for class {class_name} finished in {duration:.2f} seconds.")
 
-    # --- Results ---
+    # --- Results ---Improve performance
     results = {
         "class": class_name,
         "status": "completed" if eval_metrics else "evaluation_failed",
@@ -531,9 +533,173 @@ def run_experiment(
 
     return results
 
+def run_unified_experiment(args: Any,
+                           categories_list: List[str],
+                           base_save_dir: Path,
+                           device: torch.device,
+                           wandb_run: Optional[wandb.sdk.wandb_run.Run] = None
+                           ) -> Dict[str, Any]:
+    """Runs the full training and evaluation pipeline for unified classes training."""
+
+    logger.info("\n" + "="*50)
+    logger.info(f" Starting Experiment for Class: {categories_list} ")
+    logger.info("="*50 + "\n")
+
+    start_time = time.time()
+
+    # --- Setup for the specific class ---
+    #args.obj = class_name # Set the class name in args for dataloader
+    set_seed(args.seed) # Set seed for reproducibility for this specific run
+
+    # Create specific save directory for this class run
+    run_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    current_save_dir = base_save_dir / f"unified_{args.model}_{run_timestamp}"
+    current_save_dir.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Saving results to: {current_save_dir}")
+    best_model_path = ''
+    # --- Data Loaders ---
+    logger.info("Loading datasets...")
+    try:
+        train_loader, val_loader, test_loader = get_dataloader(args)
+        logger.info(
+            f"Train batches: {len(train_loader)}, Val batches: {len(val_loader)}, Test batches: {len(test_loader)}")
+    except Exception as e:
+        logger.error(f"Error getting dataloaders for class {class_name}: {e}")
+        return {"class": class_name, "status": "failed", "error": str(e)}
+
+    # --- Model, Optimizer, Criterion, Scaler ---
+    model = get_model(device) if model is None else model
+    optimizer = get_optimizer(model)
+    # Using L2Loss between features as per ViTAD approach
+    criterion = L2Loss()
+    scaler = amp.GradScaler(enabled=args.amp)
+
+    # --- Instantiate Evaluator ---
+    evaluator = Evaluator(
+        metrics=METRICS_TO_COMPUTE,
+        pooling_ks=None,  # Adjust if needed
+        max_step_aupro=100,  # Default
+        mp=False,  # Set to True to try multiprocessing for AUPRO (can be slow)
+        use_adeval=args.use_adeval if hasattr(args, 'use_adeval') else False  # Check if arg exists
+    )
+
+    # --- Training Loop ---
+    best_val_loss = float('inf')
+    epochs_without_improvement = 0
+    best_model_path = current_save_dir / f"model_{class_name}_{args.model}_best.pt"
+
+    logger.info(f"Starting training for {args.epochs} epochs...")
+    for epoch in range(1, args.epochs + 1):
+        train_loss = train_epoch(args, model, train_loader, optimizer, criterion, scaler, device, epoch)
+
+        if epoch % args.val_epochs == 0:
+            val_loss = validate_epoch(args, model, val_loader, criterion, device, epoch)
+            # Log metrics to WandB (if enabled)
+            if wandb_run:
+                wandb.log({
+                    f"{class_name}_train_loss": train_loss,
+                    f"{class_name}_val_loss": val_loss,
+                    "epoch": epoch  # Log global epoch step if needed, or per-class epoch
+                })
+
+            # Simple best model saving based on validation loss
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                epochs_without_improvement = 0
+                # Save the best model checkpoint
+                best_model_path = current_save_dir / f"model_{class_name}_{args.model}_best.pt"
+                torch.save(model.state_dict(), best_model_path)
+                print(f"Validation loss improved to {val_loss:.6f}. Saved best model to {best_model_path}")
+            else:
+                epochs_without_improvement += 1
+            # debug images here
+            eval_metrics = evaluate_performance(
+                model=model,
+                test_loader=test_loader,
+                epoch_number=epoch,
+                device=device,
+                save_dir=current_save_dir / "eval_debug",  # Subdir for debug images
+                class_name=class_name,
+                evaluator=evaluator  # Pass the evaluator instance
+            )
+
+            if 0 < args.early_stopping_patience <= epochs_without_improvement:
+                print(f"Early stopping triggered after {epoch} epochs.")
+                break
+
+        else:
+            if wandb_run:
+                wandb.log({
+                    f"{class_name}_train_loss": train_loss,
+                    "epoch": epoch  # Log global epoch step if needed, or per-class epoch
+                })
+
+
+
+def summary_results(all_results):
+    # --- Final Summary ---
+    logger.info("\n" + "=" * 80)
+    logger.info(" Overall Results Summary ")
+    logger.info("=" * 80)
+
+    # Define headers based on the metrics actually computed
+    header_metrics = METRICS_TO_COMPUTE  # Use the list defined earlier
+    header = f"{'Class':<15} | {'Status':<10} | " + " | ".join(
+        [f'{m:<15}' for m in header_metrics]) + f" | {'Time (s)':<10}"
+    logger.info(header)
+    logger.info("-" * len(header))
+
+    # Aggregate metrics for average calculation
+    aggregated_metrics = {m: [] for m in header_metrics}
+    completed_count = 0
+    total_time = 0.0
+
+    for result in all_results:
+        status = result['status']
+        class_name = result['class']
+        time_s = result.get('training_time_seconds', 0)
+
+        if status == 'completed':
+            metrics = result['metrics']
+            metric_values = [metrics.get(m, np.nan) for m in header_metrics]  # Get values, use NaN if missing
+            row = f"{class_name:<15} | {status:<10} | " + " | ".join(
+                [f'{v:.4f}' if not np.isnan(v) else 'N/A' for v in metric_values]) + f" | {time_s:<10.2f}"
+            logger.info(row)
+
+            for m, v in zip(header_metrics, metric_values):
+                if not np.isnan(v):
+                    aggregated_metrics[m].append(v)
+            completed_count += 1
+            total_time += time_s
+        else:
+            error_msg = result.get('error', 'Unknown')
+            row = f"{class_name:<15} | {status:<10} | " + " | ".join(['N/A'] * len(header_metrics)) + f" | {'N/A':<10}"
+            logger.info(row)
+            logger.warning(f"  -> Failed Class '{class_name}' Reason: {error_msg}")
+
+    if completed_count > 0:
+        avg_metrics = {m: np.mean(vals) for m, vals in aggregated_metrics.items() if vals}
+        avg_metric_values = [avg_metrics.get(m, np.nan) for m in header_metrics]
+        avg_time = total_time / completed_count
+
+        logger.info("-" * len(header))
+        avg_row = f"{'Average':<15} | {'':<10} | " + " | ".join(
+            [f'{v:.4f}' if not np.isnan(v) else 'N/A' for v in avg_metric_values]) + f" | {avg_time:<10.2f}"
+        logger.info(avg_row)
+        logger.info("=" * len(header))
+
+        # Log average metrics to WandB
+        if wandb_run:
+            for m, v in avg_metrics.items():
+                wandb.summary[f"average/{m}"] = v
+            wandb.summary["average/training_time_seconds"] = avg_time
+            wandb.summary["completed_classes"] = completed_count
+    else:
+        logger.info("\nNo experiments completed successfully.")
+
+
 
 if __name__ == "__main__":
-
     # --- Global Setup ---
     start_time_full_training = time.time()
     args_save_dir = Path(args.save_dir)
@@ -581,76 +747,13 @@ if __name__ == "__main__":
         logger.error(f"Error: Object '{args.obj}' not found in CLASS_NAMES: {CLASS_NAMES}")
         sys.exit(1)
 
-    # --- Run Experiments ---
-    all_results = []
+    ## Unified training
     try:
-        for class_name in classes_to_run:
-            class_results = run_experiment(
-                args=args,
-                class_name=class_name,
-                base_save_dir=base_save_dir,
-                device=device,
-                wandb_run=wandb_run
-            )
-            all_results.append(class_results)
-
-        # --- Final Summary ---
-        logger.info("\n" + "="*80)
-        logger.info(" Overall Results Summary ")
-        logger.info("="*80)
-
-        # Define headers based on the metrics actually computed
-        header_metrics = METRICS_TO_COMPUTE # Use the list defined earlier
-        header = f"{'Class':<15} | {'Status':<10} | " + " | ".join([f'{m:<15}' for m in header_metrics]) + f" | {'Time (s)':<10}"
-        logger.info(header)
-        logger.info("-" * len(header))
-
-        # Aggregate metrics for average calculation
-        aggregated_metrics = {m: [] for m in header_metrics}
-        completed_count = 0
-        total_time = 0.0
-
-        for result in all_results:
-            status = result['status']
-            class_name = result['class']
-            time_s = result.get('training_time_seconds', 0)
-
-            if status == 'completed':
-                metrics = result['metrics']
-                metric_values = [metrics.get(m, np.nan) for m in header_metrics] # Get values, use NaN if missing
-                row = f"{class_name:<15} | {status:<10} | " + " | ".join([f'{v:.4f}' if not np.isnan(v) else 'N/A' for v in metric_values]) + f" | {time_s:<10.2f}"
-                logger.info(row)
-
-                for m, v in zip(header_metrics, metric_values):
-                    if not np.isnan(v):
-                        aggregated_metrics[m].append(v)
-                completed_count += 1
-                total_time += time_s
-            else:
-                error_msg = result.get('error', 'Unknown')
-                row = f"{class_name:<15} | {status:<10} | " + " | ".join(['N/A'] * len(header_metrics)) + f" | {'N/A':<10}"
-                logger.info(row)
-                logger.warning(f"  -> Failed Class '{class_name}' Reason: {error_msg}")
-
-
-        if completed_count > 0:
-             avg_metrics = {m: np.mean(vals) for m, vals in aggregated_metrics.items() if vals}
-             avg_metric_values = [avg_metrics.get(m, np.nan) for m in header_metrics]
-             avg_time = total_time / completed_count
-
-             logger.info("-" * len(header))
-             avg_row = f"{'Average':<15} | {'':<10} | " + " | ".join([f'{v:.4f}' if not np.isnan(v) else 'N/A' for v in avg_metric_values]) + f" | {avg_time:<10.2f}"
-             logger.info(avg_row)
-             logger.info("=" * len(header))
-
-             # Log average metrics to WandB
-             if wandb_run:
-                 for m, v in avg_metrics.items():
-                     wandb.summary[f"average/{m}"] = v
-                 wandb.summary["average/training_time_seconds"] = avg_time
-                 wandb.summary["completed_classes"] = completed_count
-        else:
-             logger.info("\nNo experiments completed successfully.")
+        run_unified_experiment(args=args,
+                               categories_list=classes_to_run,
+                               base_save_dir=base_save_dir,
+                               device=device,
+                               wandb_run=wandb_run, )
 
         total_duration_script = time.time() - start_time_full_training
         logger.info(f"\nTotal script execution time: {total_duration_script:.2f} seconds.")
@@ -664,3 +767,32 @@ if __name__ == "__main__":
         if wandb_run:
             wandb.finish()
             logger.info("Wandb run finished.")
+
+    ## Separate class training
+    # --- Run Experiments ---
+    # all_results = []
+    # try:
+    #     for class_name in classes_to_run:
+    #         class_results = run_experiment(
+    #             args=args,
+    #             class_name=class_name,
+    #             base_save_dir=base_save_dir,
+    #             model=None,
+    #             device=device,
+    #             wandb_run=wandb_run
+    #         )
+    #         all_results.append(class_results)
+    #
+    #     summary_results(all_results)
+    #     total_duration_script = time.time() - start_time_full_training
+    #     logger.info(f"\nTotal script execution time: {total_duration_script:.2f} seconds.")
+    #     if wandb_run:
+    #         wandb.summary["total_duration_seconds"] = total_duration_script
+    #
+    # except Exception as e:
+    #      logger.error(f"An unexpected error occurred during the main execution: {e}", exc_info=True)
+    # finally:
+    #     # --- Finish Wandb Run ---
+    #     if wandb_run:
+    #         wandb.finish()
+    #         logger.info("Wandb run finished.")

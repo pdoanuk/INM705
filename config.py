@@ -15,11 +15,11 @@ args = EasyDict({
     'device': 'cuda:0',
     'batch_size': 16,
     'num_workers': 16,
-    'epochs': 100,
+    'epochs': 20,
     'val_epochs': 20,
     'lr': 2e-4,
     'weight_decay': 0.0001,
-    'obj': 'all',
+    'obj': 'full',
     'val_ratio': 0.2,
     'save_dir': './saved_results/',
     'dataset_path': '/home/phuocddat/git-repo/cv/ADer/data/mvtec',
@@ -32,7 +32,7 @@ args = EasyDict({
     'wandb_log': True,
     'mode': "online",
     'project': "INM705 - EXP",
-    'notes': 'AdamW, L2Loss',  # Notes about the run, verbose description [str]
+    'notes': 'AdamW, L2Loss, unified by training concurrently for 50 epoches',  # Notes about the run, verbose description [str]
     'log_comment': ' Some comment',  # Comment to add to name the local logging folder [str]
     'wandb_dir': './wandb_log',  # Direcotry to store the wandb file. CAREFUL: Directory must exists [str]
     'log_dir': './logdir',  # Direcotry to store all logging related files and outputs [str]
