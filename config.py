@@ -15,7 +15,7 @@ args = EasyDict({
     'device': 'cuda:0',
     'batch_size': 16,
     'num_workers': 16,
-    'epochs': 20,
+    'epochs': 50,
     'val_epochs': 20,
     'lr': 2e-4,
     'weight_decay': 0.0001,
