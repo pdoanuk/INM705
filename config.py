@@ -15,9 +15,10 @@ args = EasyDict({
     'device': 'cuda:0',
     'batch_size': 16,
     'num_workers': 16,
-    'epochs': 50,
-    'val_epochs': 20,
-    'lr': 2e-4,
+    'epochs': 20,
+    'warmup_epochs': 10,
+    'val_epochs': 5,
+    'lr': 1e-4 * 16 / 8, #0.001, # was 2e-4
     'weight_decay': 0.0001,
     'obj': 'full',
     'val_ratio': 0.2,
@@ -32,7 +33,7 @@ args = EasyDict({
     'wandb_log': True,
     'mode': "online",
     'project': "INM705 - EXP",
-    'notes': 'AdamW, L2Loss, unified by training concurrently for 50 epoches',  # Notes about the run, verbose description [str]
+    'notes': 'AdamW, L2Loss, VitAD-based unified all class, LRScheduler Cosine - Evaluate every val_epoch _ Experiment',  # Notes about the run, verbose description [str]
     'log_comment': ' Some comment',  # Comment to add to name the local logging folder [str]
     'wandb_dir': './wandb_log',  # Direcotry to store the wandb file. CAREFUL: Directory must exists [str]
     'log_dir': './logdir',  # Direcotry to store all logging related files and outputs [str]

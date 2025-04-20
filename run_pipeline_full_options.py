@@ -34,11 +34,10 @@ from typing import Tuple, List, Dict, Any, Optional, Union
 try:
     from dataset_mvtec import get_dataloader, get_loader_full
     from model_vitad import load_default_model # Using ViTAD model with manual loading function
+
     from losses import L2Loss # L1Loss, CosLoss also available
     from utils_mvtec import set_seed, denormalization, log_write # Keep utility functions
     from config import args, CLASS_NAMES, mean_train, std_train
-    # Import the refactored Evaluator
-    #from metrics_uni import Evaluator
     from metrics import Evaluator
 except ImportError as e:
     print(f"Error importing local modules: {e}")
@@ -74,6 +73,7 @@ def get_model(device: torch.device) -> nn.Module:
     """
     """This one is only for ViTAD-based model"""
     model = load_default_model().to(device)
+
     logger.info(f"Using model: {model.__class__.__name__} loading on {device}")
     if DEBUG:
         try:
@@ -415,7 +415,7 @@ def save_debug_images(
 
         plt.tight_layout(rect=[0, 0.03, 1, 0.93]) # Adjust layout for sub title
         # Include actual class name in filename for clarity, especially for 'full' context
-        save_path = save_dir / f"debug_{model_name}_{run_context}_idx{idx}_{actual_class_name}_ep{epoch_str}.png"
+        save_path = save_dir / f"debug_{model_name}_{run_context}_idx{idx}_{actual_class_name}_epoch_{epoch_str}.png"
         try:
             plt.savefig(save_path)
         except Exception as e:
@@ -663,7 +663,7 @@ def run_experiment_all(
     optimizer = get_optimizer(model)
     criterion = L2Loss().to(device)
     scaler = amp.GradScaler(enabled=args.amp)
-
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
     # --- Instantiate Evaluator ---
     evaluator = Evaluator(
         metrics=METRICS_TO_COMPUTE,
@@ -683,18 +683,44 @@ def run_experiment_all(
     for epoch in range(1, args.epochs + 1):
         # Pass context_name to training functions
         train_loss = train_epoch(args, model, train_loader, optimizer, criterion, scaler, device, epoch, run_context=context_name)
+        scheduler.step()
+        current_lr = scheduler.get_last_lr()[0]
 
+        # if wandb_run: wandb.log({f"{class_name}/learning_rate": current_lr, "epoch": epoch})
         # Validation and potential early stopping
         if epoch % args.val_epochs == 0 or epoch == args.epochs:
             val_loss = validate_epoch(args, model, val_loader, criterion, device, epoch, run_context=context_name)
-            logger.info(f"Epoch {epoch}/{args.epochs} => Context: {context_name}, Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}")
-
+            logger.info(f"Epoch {epoch}/{args.epochs} LR {current_lr} => Context: {context_name}, Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}")
             # Use simplified keys for full dataset run in WandB logs
             log_dict = {
                 f"{context_name}/train_loss": train_loss,
                 f"{context_name}/val_loss": val_loss,
+                f"{context_name}/learning_rate": current_lr,
                 "epoch": epoch
             }
+
+            logger.info(f"\n--- Running Evaluation for Full Dataset ({context_name}) at {epoch}---")
+            current_args_obj = args.obj
+            for cls_name in list_categories:
+                args.obj = cls_name
+                _, _, test_data_loader = get_dataloader(args)
+                eval_metrics = evaluate_performance(
+                    model=model,
+                    test_loader=test_data_loader,
+                    epoch_number=epoch,
+                    device=device,
+                    save_dir=current_save_dir / "eval_debug_final",
+                    run_context=cls_name,  # Pass 'full' context
+                    evaluator=evaluator,
+                    debug_image_indices=DEFAULT_IMAGE_TO_VISUAL
+                )
+                for metric_name, metric_value in eval_metrics.items():
+                    log_dict[f"{cls_name}/{metric_name}"] = metric_value
+
+            # return args.obj
+            args.obj = current_args_obj
+            if wandb_run:
+                wandb.log(log_dict, step=epoch)
 
             ## Early stop is not employed for now
             # if val_loss < best_val_loss:
@@ -705,15 +731,14 @@ def run_experiment_all(
             # else:
             #     epochs_without_improvement += args.val_epochs
 
-            if wandb_run:
-                 wandb.log(log_dict, step=epoch)
-
             # if args.early_stopping_patience > 0 and epochs_without_improvement >= args.early_stopping_patience:
             #     logger.info(f"Early stopping triggered for {context_name} run after {epoch} epochs.")
             #     break
         else:
              # Log only training loss if not a validation epoch
-             log_dict = { f"{context_name}/train_loss": train_loss, "epoch": epoch }
+             log_dict = { f"{context_name}/train_loss": train_loss,
+                          f"{context_name}/learning_rate": current_lr,
+                          "epoch": epoch }
              if wandb_run:
                  wandb.log(log_dict, step=epoch)
 
@@ -820,6 +845,7 @@ if __name__ == "__main__":
                 project=WANDB_PROJECT_NAME,
                 name=run_name,
                 tags=WANDB_TAGS + [args.model, args.obj if args.obj else 'N/A'],
+                notes=args.notes,
                 config=vars(args), # Log all arguments
                 dir=str(base_save_dir), # Set wandb log directory within the run's base dir
                 mode=wandb_mode, # online, offline, or disabled
