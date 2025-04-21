@@ -321,6 +321,123 @@ class Evaluator(object):
         return metric_results
 
     @staticmethod
+    def calculate_image_anomaly_map(x_list, x_hat_list, out_size,
+                                    metric='mse',
+                                    aggregate_channels='mean',
+                                    combination_mode='add',
+                                    combination_weights=None,
+                                    gaussian_sigma=0,
+                                    device: str = 'cpu'
+                                    ):
+        """
+        Calculates pixel-wise anomaly maps between lists of original and reconstructed
+        image tensors, combines them, and optionally applies smoothing.
+
+        Args:
+            x_list (List[torch.Tensor]): List of original image tensors [B, C, H_i, W_i] (on device).
+            x_hat_list (List[torch.Tensor]): List of reconstructed image tensors [B, C, H_i, W_i] (on device).
+            out_size (tuple): Target output size for the final map (H_out, W_out).
+            metric (str): The metric for pixel difference ('mse' or 'mae'). Defaults to 'mse'.
+            aggregate_channels (str): How to aggregate differences across channels ('mean', 'sum', 'max'). Defaults to 'mean'.
+            combination_mode (str): How to combine maps from different list items ('add' or 'mul'). Defaults to 'add'.
+            combination_weights (Optional[List[float]]): Weights for combining maps if mode is 'add'. Defaults to equal weights.
+            gaussian_sigma (float): Sigma for Gaussian smoothing applied to the final combined map. Defaults to 0.
+            device (str or torch.device): The device ('cuda' or 'cpu') for calculations.
+
+        Returns:
+            torch.Tensor: The final combined anomaly map tensor on the specified device [B, H_out, W_out].
+        """
+        if not x_list or not x_hat_list or len(x_list) != len(x_hat_list):
+            raise ValueError("Input lists x_list and x_hat_list must be non-empty and have the same length.")
+
+        num_maps = len(x_list)
+        batch_size = x_list[0].shape[0]
+
+        # Prepare combination weights
+        if combination_weights is None or len(combination_weights) != num_maps:
+            if combination_weights is not None:
+                logger.warning(
+                    f"combination_weights length mismatch ({len(combination_weights)} != {num_maps}). Using equal weights.")
+            weights = torch.ones(num_maps, device=device, dtype=torch.float32)
+        else:
+            weights = torch.tensor(combination_weights, device=device, dtype=torch.float32)
+
+        total_weight = weights.sum() if combination_mode == 'add' else 1.0
+        if combination_mode == 'add' and total_weight <= 1e-6:
+            logger.warning("Sum of combination weights is near zero. Resulting map might be invalid.")
+            total_weight = 1.0  # Avoid division by zero
+
+        # Initialize final anomaly map
+        if combination_mode == 'add':
+            anomaly_map_final = torch.zeros([batch_size, 1, *out_size], dtype=torch.float32, device=device)
+        elif combination_mode == 'mul':
+            anomaly_map_final = torch.ones([batch_size, 1, *out_size], dtype=torch.float32, device=device)
+        else:
+            raise ValueError(f"Invalid combination_mode: {combination_mode}. Choose 'add' or 'mul'.")
+
+        individual_anomaly_maps = []  # Optional: store individual maps before combination
+
+        with torch.no_grad():
+            for i in range(num_maps):
+                x_i = x_list[i].to(device)
+                x_hat_i = x_hat_list[i].to(device)
+
+                if x_i.shape != x_hat_i.shape:
+                    raise ValueError(
+                        f"Shape mismatch between x_list[{i}] ({x_i.shape}) and x_hat_list[{i}] ({x_hat_i.shape}).")
+                if x_i.ndim != 4:
+                    raise ValueError(f"Input tensors must be 4D (B, C, H, W). Got {x_i.ndim}D for item {i}.")
+
+                # --- Calculate Pixel-wise Difference ---
+                if metric == 'mse':
+                    diff = (x_i - x_hat_i) ** 2
+                elif metric == 'mae':
+                    diff = torch.abs(x_i - x_hat_i)
+                else:
+                    raise ValueError(f"Unsupported metric: {metric}. Choose 'mse' or 'mae'.")
+
+                # --- Aggregate Channels ---
+                if aggregate_channels == 'mean':
+                    anomaly_map_i = torch.mean(diff, dim=1, keepdim=True)  # [B, 1, H_i, W_i]
+                elif aggregate_channels == 'sum':
+                    anomaly_map_i = torch.sum(diff, dim=1, keepdim=True)  # [B, 1, H_i, W_i]
+                elif aggregate_channels == 'max':
+                    anomaly_map_i = torch.max(diff, dim=1, keepdim=True)[0]  # [B, 1, H_i, W_i]
+                else:
+                    raise ValueError(
+                        f"Unsupported channel aggregation: {aggregate_channels}. Choose 'mean', 'sum', or 'max'.")
+
+                # --- Resize individual map to Output Size ---
+                anomaly_map_i_resized = F.interpolate(anomaly_map_i, size=out_size, mode='bilinear',
+                                                      align_corners=False)  # [B, 1, H_out, W_out]
+                individual_anomaly_maps.append(anomaly_map_i_resized)
+
+                # --- Combine with final map ---
+                if combination_mode == 'add':
+                    anomaly_map_final += anomaly_map_i_resized * weights[i]
+                elif combination_mode == 'mul':
+                    anomaly_map_final *= torch.clamp(anomaly_map_i_resized, min=1e-6)  # Avoid multiplying by zero
+
+            # Normalize if using 'add' mode
+            if combination_mode == 'add':
+                anomaly_map_final /= total_weight
+
+            # --- Apply Gaussian Smoothing to the final combined map ---
+            if gaussian_sigma > 0:
+                logger.debug(f"Using CPU Gaussian filter (sigma={gaussian_sigma}) for combined image anomaly map.")
+                anomaly_map_np = anomaly_map_final.squeeze(1).cpu().numpy()
+                for idx in range(anomaly_map_np.shape[0]):
+                    anomaly_map_np[idx] = gaussian_filter(anomaly_map_np[idx], sigma=gaussian_sigma)
+                anomaly_map_final = torch.from_numpy(anomaly_map_np).unsqueeze(1).to(device)
+
+            # Remove channel dimension for final output
+            anomaly_map_final = anomaly_map_final.squeeze(1)  # [B, H_out, W_out]
+
+
+        return anomaly_map_final
+
+
+    @staticmethod
     def cal_anomaly_map(ft_list, fs_list, out_size, uni_am=False, use_cos=True, amap_mode='add', gaussian_sigma=0, weights=None):
         """
         Calculates anomaly maps by comparing feature lists.

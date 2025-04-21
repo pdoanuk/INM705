@@ -37,7 +37,7 @@ from PIL import Image
 try:
     from dataset_mvtec import get_dataloader, get_loader_full
     from model_vitad import load_default_model # Using ViTAD model with manual loading function
-    from model_vit import VitEncoder, VitDecoder, VitDecoderExp
+    from model_vit import ViTAutoencoder, VitDecoderExp
     from losses import L2Loss, CosLoss # L1Loss, CosLoss also available
     from utils_mvtec import set_seed, denormalization, log_write # Keep utility functions
     from config import *
@@ -261,7 +261,7 @@ def evaluate_performance(
     epoch_str = str(epoch_number) if epoch_number is not None else 'final'
     logger.info(f"Running evaluation for context: {run_context} (Epoch: {epoch_str})...")
     pbar = tqdm(test_loader, desc=f"Evaluation [{run_context}, Epoch {epoch_str}]", leave=False)
-
+    loss_func = nn.MSELoss(reduction='none') # default for image-wise compute
     output_size = (args.image_size, args.image_size)
 
     # Correctly unpack data, including the actual class names per batch
@@ -280,7 +280,7 @@ def evaluate_performance(
                          # Only use features relevant for the loss (ViTAD compares enc/fus)
                      else:
                          x_hat = model(x)
-                         feature_enc, feature_fus = x, x_hat
+                         loss_px = loss_func(x_hat, x)
 
                     # feature_enc, feature_fus = model(x) # Get features
             else:
@@ -289,31 +289,35 @@ def evaluate_performance(
                     # Only use features relevant for the loss (ViTAD compares enc/fus)
                 else:
                     x_hat = model(x)
-                    feature_enc, feature_fus = x, x_hat
+                    loss_px = loss_func(x_hat, x)
 
                 # feature_enc, feature_fus = model(x) # Get features
 
         # --- Anomaly Map Calculation ---
-
-        if not isinstance(feature_enc, list): feature_enc = [feature_enc]
-        if not isinstance(feature_fus, list): feature_fus = [feature_fus]
-
+        if args.model == "ViTAD_Fusion":
+            if not isinstance(feature_enc, list): feature_enc = [feature_enc]
+            if not isinstance(feature_fus, list): feature_fus = [feature_fus]
             # Ensure features are valid before calculation
-        if DEBUG:
-            if not feature_enc or feature_enc[0] is None or not feature_fus or feature_fus[0] is None:
-                logger.warning(f"Skipping batch due to missing features in evaluation for {run_context}.")
-                continue # Skip this batch
+            if DEBUG:
+                if not feature_enc or feature_enc[0] is None or not feature_fus or feature_fus[0] is None:
+                    logger.warning(f"Skipping batch due to missing features in evaluation for {run_context}.")
+                    continue  # Skip this batch
 
         try:
-            anomaly_map_batch, _ = Evaluator.cal_anomaly_map(
-                ft_list=feature_enc,
-                fs_list=feature_fus,
-                out_size=output_size,
-                uni_am=False, # Or True, depending on desired fusion strategy
-                amap_mode='add', # Or 'mul'
-                gaussian_sigma=ANOMALY_MAP_SIGMA, # Use configured sigma
-                use_cos=True if args.loss_func == "CosLoss" else False
-            )
+            if args.model == "ViTAD_Fusion":
+                anomaly_map_batch, _ = Evaluator.cal_anomaly_map(
+                    ft_list=feature_enc,
+                    fs_list=feature_fus,
+                    out_size=output_size,
+                    uni_am=False, # Or True, depending on desired fusion strategy
+                    amap_mode='add', # Or 'mul'
+                    gaussian_sigma=ANOMALY_MAP_SIGMA, # Use configured sigma
+                    use_cos=True if args.loss_func == "CosLoss" else False
+                )
+            else:
+                anomaly_map_batch = loss_px.mean(dim=1).cpu().numpy()
+                logger.info(f"anomaly_map_batch shape {anomaly_map_batch.shape}")
+
         except Exception as e:
             logger.error(f"Error during anomaly map calculation for {run_context}: {e}. Skipping batch.")
             continue # Skip this batch

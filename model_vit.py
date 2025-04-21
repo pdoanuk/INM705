@@ -9,7 +9,8 @@ from config import args
 ## end -
 
 class VitDecoderExp(nn.Module):
-    def __init__(self, model_name='vit_base_patch16_384', pretrained=True):
+    #vit_base_patch16_384
+    def __init__(self, model_name='vit_base_patch16_224', pretrained=True):
         super(VitDecoderExp, self).__init__()
         ## self.args = args
         self.image_size = args.image_size
@@ -17,7 +18,7 @@ class VitDecoderExp(nn.Module):
         if self.image_size % self.patch_size != 0:
             raise ValueError(f"Image size ({self.image_size}) must be divisible by patch size ({self.patch_size})")
 
-        self.encoder = timm.create_model(model_name, pretrained=pretrained)
+        self.encoder = timm.create_model(model_name, pretrained=pretrained, img_size=self.image_size)
         # Remove the classification head
         self.encoder.head = nn.Identity()
 

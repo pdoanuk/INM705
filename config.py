@@ -32,12 +32,12 @@ args = EasyDict({
     'batch_size': 16,
     'num_workers': 16,
     'epochs': 100,
-    'warmup_epochs': 10,
+    'warmup_epochs': 2,
     'val_epochs': 20,
-    'loss_func': 'CosLoss', # CosLoss, L2Loss
+    'loss_func': 'L2Loss', # CosLoss, L2Loss
     'lr': 1e-4 * 16 / 8, #0.001, # was 2e-4
     'weight_decay': 0.0001,
-    'obj': 'all', # all: run all classes separate, full run all in one
+    'obj': 'full', # all: run all classes separate, full run all in one
     'val_ratio': 0.2,
     'save_dir': './saved_results_new/',
     'dataset_path': '/home/phuocddat/git-repo/cv/ADer/data/mvtec',
