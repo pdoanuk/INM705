@@ -37,10 +37,10 @@ from PIL import Image
 try:
     from dataset_mvtec import get_dataloader, get_loader_full
     from model_vitad import load_default_model # Using ViTAD model with manual loading function
-
-    from losses import L2Loss # L1Loss, CosLoss also available
+    from model_vit import VitEncoder, VitDecoder, VitDecoderExp
+    from losses import L2Loss, CosLoss # L1Loss, CosLoss also available
     from utils_mvtec import set_seed, denormalization, log_write # Keep utility functions
-    from config import args, CLASS_NAMES, mean_train, std_train
+    from config import *
     from metrics import Evaluator
 except ImportError as e:
     print(f"Error importing local modules: {e}")
@@ -48,20 +48,7 @@ except ImportError as e:
 
 # --- Configuration ---
 # SHOULD MOVE TO CONFIG.PY
-ANOMALY_MAP_SIGMA = 4 # Need to revise the impact
-# Metrics to compute using the Evaluator
-METRICS_TO_COMPUTE = [
-    'mAUROC_px', 'mAUROC_sp_max', # Pixel and Image AUROC
-    'mAUPRO_px',                 # Pixel AUPRO
-    'mAP_px', 'mAP_sp_max',      # Pixel and Image Average Precision
-    'mF1_max_sp_max',            # Max F1 for Image (max pooling)
-    'mIoU_max_px',               # Max Pixel IoU over thresholds
-]
-WANDB_PROJECT_NAME = "INM705-exp" # Consider making this configurable via args
-WANDB_TAGS = ["experiment", "ViT-AD", "ViTAD custom model"]
-# Define identifier for the full dataset run in args.obj
-FULL_DATASET_IDENTIFIER = "full" # Need to review this later, configuration may be: single object, full[sep, unified]
-DEFAULT_IMAGE_TO_VISUAL = [1, 5, 10, 15]
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -75,7 +62,12 @@ def get_model(device: torch.device) -> nn.Module:
         device:
     """
     """This one is only for ViTAD-based model"""
-    model = load_default_model().to(device)
+    if args.model == "ViTAD_Fusion":
+        model = load_default_model().to(device)
+    elif args.model == "VitDecoderExp":
+        model = VitDecoderExp().to(device)
+    else:
+        logger.info(f"Using model {args.model} was not supported yet")
 
     logger.info(f"Using model: {model.__class__.__name__} loading on {device}")
     if DEBUG:
@@ -135,16 +127,25 @@ def train_epoch(
 
         if args.amp:
             with amp.autocast():
-                # TODO: more generalised option
-                feature_enc, feature_fus = model(x) # Get features from ViTAD model
-                # Only use features relevant for the loss (ViTAD compares enc/fus)
-                loss = criterion(feature_enc, feature_fus) # Compare features
+                if args.model == "ViTAD_Fusion":
+                    feature_enc, feature_fus = model(x)  # Get features from ViTAD model
+                    # Only use features relevant for the loss (ViTAD compares enc/fus)
+                    loss = criterion(feature_enc, feature_fus)  # Compare features
+                else:
+                    x_hat = model(x)
+                    loss = criterion(x_hat, x)
+
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
         else:
-            feature_enc, feature_fus = model(x)
-            loss = criterion(feature_enc, feature_fus)
+            if args.model == "ViTAD_Fusion":
+                feature_enc, feature_fus = model(x)
+                loss = criterion(feature_enc, feature_fus)
+            else:
+                x_hat = model(x)
+                loss = criterion(x_hat, x)
+
             loss.backward()
             optimizer.step()
 
@@ -188,11 +189,25 @@ def validate_epoch(
             x = x.to(device)
             if args.amp:
                 with amp.autocast():
-                    feature_enc, feature_fus = model(x)
-                    loss = criterion(feature_enc, feature_fus)
+                    if args.model == "ViTAD_Fusion":
+                        feature_enc, feature_fus = model(x)  # Get features from ViTAD model
+                        # Only use features relevant for the loss (ViTAD compares enc/fus)
+                        loss = criterion(feature_enc, feature_fus)  # Compare features
+                    else:
+                        x_hat = model(x)
+                        loss = criterion(x_hat, x)
+                    # feature_enc, feature_fus = model(x)
+                    # loss = criterion(feature_enc, feature_fus)
             else:
-                feature_enc, feature_fus = model(x)
-                loss = criterion(feature_enc, feature_fus)
+                if args.model == "ViTAD_Fusion":
+                    feature_enc, feature_fus = model(x)  # Get features from ViTAD model
+                    # Only use features relevant for the loss (ViTAD compares enc/fus)
+                    loss = criterion(feature_enc, feature_fus)  # Compare features
+                else:
+                    x_hat = model(x)
+                    loss = criterion(x_hat, x)
+                # feature_enc, feature_fus = model(x)
+                # loss = criterion(feature_enc, feature_fus)
 
             batch_loss = loss.item()
             total_loss += batch_loss
@@ -260,15 +275,30 @@ def evaluate_performance(
         with torch.no_grad():
             if args.amp:
                  with amp.autocast():
-                    feature_enc, feature_fus = model(x) # Get features
+                     if args.model == "ViTAD_Fusion":
+                         feature_enc, feature_fus = model(x)  # Get features from ViTAD model
+                         # Only use features relevant for the loss (ViTAD compares enc/fus)
+                     else:
+                         x_hat = model(x)
+                         feature_enc, feature_fus = x, x_hat
+
+                    # feature_enc, feature_fus = model(x) # Get features
             else:
-                feature_enc, feature_fus = model(x) # Get features
+                if args.model == "ViTAD_Fusion":
+                    feature_enc, feature_fus = model(x)  # Get features from ViTAD model
+                    # Only use features relevant for the loss (ViTAD compares enc/fus)
+                else:
+                    x_hat = model(x)
+                    feature_enc, feature_fus = x, x_hat
+
+                # feature_enc, feature_fus = model(x) # Get features
 
         # --- Anomaly Map Calculation ---
+
         if not isinstance(feature_enc, list): feature_enc = [feature_enc]
         if not isinstance(feature_fus, list): feature_fus = [feature_fus]
 
-        # Ensure features are valid before calculation
+            # Ensure features are valid before calculation
         if DEBUG:
             if not feature_enc or feature_enc[0] is None or not feature_fus or feature_fus[0] is None:
                 logger.warning(f"Skipping batch due to missing features in evaluation for {run_context}.")
@@ -282,7 +312,7 @@ def evaluate_performance(
                 uni_am=False, # Or True, depending on desired fusion strategy
                 amap_mode='add', # Or 'mul'
                 gaussian_sigma=ANOMALY_MAP_SIGMA, # Use configured sigma
-                use_cos=False # Or False for L2 distance
+                use_cos=True if args.loss_func == "CosLoss" else False
             )
         except Exception as e:
             logger.error(f"Error during anomaly map calculation for {run_context}: {e}. Skipping batch.")
@@ -426,9 +456,11 @@ def save_debug_images(
             logger.error(f"Failed to save debug image {save_path}: {e}")
         plt.close(fig)
         ## save image ==== improved
-        mean = torch.tensor([0.485, 0.456, 0.406])
-        std = torch.tensor([0.229, 0.224, 0.225])
-        img_rec = img_orig_chw * std[:, None, None] + mean[:, None, None]
+        img_orig_chw_tensor = torch.from_numpy(img_orig_chw)
+        mean_tensor = torch.tensor([0.485, 0.456, 0.406], device=img_orig_chw_tensor.device)
+        std_tensor = torch.tensor([0.229, 0.224, 0.225], device=img_orig_chw_tensor.device)
+        img_rec = img_orig_chw_tensor * std_tensor[:, None, None] + mean_tensor[:, None, None]
+        img_rec = torch.clamp(img_rec, 0, 1)
         # RGB image
         img_rec = Image.fromarray((img_rec * 255).type(torch.uint8).cpu().numpy().transpose(1, 2, 0))
         anomaly_map = np.squeeze(score_map)
@@ -438,7 +470,22 @@ def save_debug_images(
         anomaly_map = Image.fromarray(anomaly_map)  # bug here
         img_rec_anomaly_map = Image.blend(img_rec, anomaly_map, alpha=0.4)
         # mask
-        img_mask = Image.fromarray((gt_mask * 255).astype(np.uint8).transpose(1, 2, 0).repeat(3, axis=2))
+        #img_mask = Image.fromarray((gt_mask * 255).astype(np.uint8).transpose(1, 2, 0).repeat(3, axis=2))
+        # mask
+        # Ensure gt_mask is numpy and handle potential tensor input
+        if isinstance(gt_mask, torch.Tensor):
+             gt_mask = gt_mask.cpu().numpy()
+        # Ensure gt_mask is suitable type and shape for conversion
+        # Assuming gt_mask is (1, H, W) or (H, W), needs to become (H, W, 1) for transpose then repeat
+        if gt_mask.ndim == 3 and gt_mask.shape[0] == 1: # If (1, H, W)
+            gt_mask = gt_mask.squeeze(0) # Becomes (H, W)
+        if gt_mask.ndim == 2: # If (H, W)
+            gt_mask = gt_mask[:, :, np.newaxis] # Becomes (H, W, 1)
+
+        # Ensure mask is binary 0 or 1 before scaling
+        gt_mask = (gt_mask > 0.5).astype(np.uint8) # Example thresholding
+
+        img_mask = Image.fromarray((gt_mask * 255).repeat(3, axis=2))
         # Save in figure in a row
         fig, axes = plt.subplots(1, plot_cols, figsize=(fig_width, 4))
         fig.suptitle(f"Debug Idx:{idx} - Actual Class: {actual_class_name} (Context: {run_context}) Epoch: {epoch_str}")
@@ -512,7 +559,17 @@ def run_experiment(
     # --- Model, Optimizer, Criterion, Scaler ---
     model = get_model(device)
     optimizer = get_optimizer(model)
-    criterion = L2Loss().to(device) # Ensure loss is on the correct device
+    if args.loss_func == "L2Loss":
+        criterion = L2Loss().to(device) # Ensure loss is on the correct device
+    elif args.loss_func == "CosLoss":
+        criterion = CosLoss().to(device)
+    else:
+        logger.info(f"{args.loss_func} was not supported yet, using default L2Loss")
+        args.loss_func = "L2Loss"
+        criterion = L2Loss().to(device) # Ensure loss is on the correct device
+
+    logger.info(f"Loss function: {args.loss_func}")
+
     scaler = amp.GradScaler(enabled=args.amp)
 
     # --- Instantiate Evaluator ---
@@ -545,17 +602,6 @@ def run_experiment(
                 "epoch": epoch # Log epoch globally
             }
 
-            # Simple best model saving based on validation loss
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
-                epochs_without_improvement = 0
-                # Save the best model checkpoint
-                torch.save(model.state_dict(), best_model_path)
-                logger.info(f"Validation loss improved to {val_loss:.6f}. Saved best model to {best_model_path}")
-            else:
-                epochs_without_improvement += args.val_epochs # Increment by validation frequency
-
-            # Optional: Run evaluation periodically during training (can be slow)
             if epoch % args.val_epochs == 0 or epoch == args.epochs:
                  logger.info(f"Running evaluation at epoch {epoch}...")
                  all_metrics = evaluate_performance(
@@ -565,7 +611,8 @@ def run_experiment(
                      device=device,
                      save_dir=current_save_dir / "eval_debug_intermediate", # Subdir for debug images
                      run_context=class_name, # Pass class name as context
-                     evaluator=evaluator
+                     evaluator=evaluator,
+                     debug_image_indices=DEFAULT_IMAGE_TO_VISUAL,
                  )
                  # Log intermediate evaluation metrics to WandB
                  if wandb_run and all_metrics:
@@ -575,17 +622,16 @@ def run_experiment(
 
             # Log metrics to WandB (if enabled)
             if wandb_run:
-                 wandb.log(log_dict, step=epoch) # Log with epoch step
+                 # wandb.log(log_dict, step=epoch) # Log with epoch step
+                 wandb.log(log_dict) # Log with epoch step
 
-            # Check for early stopping
-            if args.early_stopping_patience > 0 and epochs_without_improvement >= args.early_stopping_patience:
-                logger.info(f"Early stopping triggered for class {class_name} after {epoch} epochs due to no improvement in validation loss for {epochs_without_improvement} epochs.")
-                break
         else:
             # Log only training loss if not a validation epoch
              log_dict = { f"{class_name}/train_loss": train_loss, "epoch": epoch }
              if wandb_run:
-                 wandb.log(log_dict, step=epoch)
+                 # wandb.log(log_dict, step=epoch)
+                 wandb.log(log_dict)
+
 
 
     logger.info(f"Training finished for class {class_name}.")
@@ -622,7 +668,8 @@ def run_experiment(
         device=device,
         save_dir=current_save_dir / "eval_debug_final", # Subdir for final debug images
         run_context=class_name, # Pass class name as context
-        evaluator=evaluator # Re-use or re-create evaluator if needed
+        evaluator=evaluator, # Re-use or re-create evaluator if needed
+        debug_image_indices = DEFAULT_IMAGE_TO_VISUAL
     )
 
     end_time = time.time()
@@ -701,7 +748,17 @@ def run_experiment_all(
     # --- Model, Optimizer, Criterion, Scaler ---
     model = get_model(device)
     optimizer = get_optimizer(model)
-    criterion = L2Loss().to(device)
+    #criterion = L2Loss().to(device)
+    if args.loss_func == "L2Loss":
+        criterion = L2Loss().to(device) # Ensure loss is on the correct device
+    elif args.loss_func == "CosLoss":
+        criterion = CosLoss().to(device)
+    else:
+        logger.info(f"{args.loss_func} was not supported yet, using default L2Loss")
+        args.loss_func =  "L2Loss"
+        criterion = L2Loss().to(device) # Ensure loss is on the correct device
+
+    logger.info(f"Loss function: {args.loss_func}")
     scaler = amp.GradScaler(enabled=args.amp)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
     # --- Instantiate Evaluator ---
@@ -886,7 +943,7 @@ if __name__ == "__main__":
                 project=WANDB_PROJECT_NAME,
                 name=run_name,
                 tags=WANDB_TAGS + [args.model, args.obj if args.obj else 'N/A'],
-                notes=args.notes,
+                notes=f"{args.notes} _ model {args.model} loss_func {args.loss_func}",
                 config=vars(args), # Log all arguments
                 dir=str(base_save_dir), # Set wandb log directory within the run's base dir
                 mode=wandb_mode, # online, offline, or disabled
@@ -911,14 +968,17 @@ if __name__ == "__main__":
         experiment_mode = "all_separate"
         try:
             for class_name in classes_to_run:
-                args.obj_current_run = class_name
+                args.obj = class_name
+
                 class_results = run_experiment(
                     args=args,
                     class_name=class_name,
                     base_save_dir=base_save_dir, # Each run gets its own subfolder inside this
                     device=device,
                     wandb_run=wandb_run # Pass the single wandb run object
+
                 )
+                args.obj='all' # need to restore
                 all_results.append(class_results)
         except Exception as e:
              logger.error(f"An unexpected error occurred during the 'all_separate' execution loop: {e}", exc_info=True)
