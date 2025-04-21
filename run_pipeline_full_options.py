@@ -20,6 +20,7 @@ import torch.cuda.amp as amp
 import torch.nn as nn
 import torch.optim as optim
 import matplotlib.pyplot as plt
+import matplotlib.cm as cm
 import wandb
 import logging # Use standard logging
 
@@ -29,6 +30,8 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from torchinfo import summary
 from typing import Tuple, List, Dict, Any, Optional, Union
+from PIL import Image
+
 
 # --- Local Imports ---
 try:
@@ -416,11 +419,48 @@ def save_debug_images(
         plt.tight_layout(rect=[0, 0.03, 1, 0.93]) # Adjust layout for sub title
         # Include actual class name in filename for clarity, especially for 'full' context
         save_path = save_dir / f"debug_{model_name}_{run_context}_idx{idx}_{actual_class_name}_epoch_{epoch_str}.png"
+
         try:
             plt.savefig(save_path)
         except Exception as e:
             logger.error(f"Failed to save debug image {save_path}: {e}")
         plt.close(fig)
+        ## save image ==== improved
+        mean = torch.tensor([0.485, 0.456, 0.406])
+        std = torch.tensor([0.229, 0.224, 0.225])
+        img_rec = img_orig_chw * std[:, None, None] + mean[:, None, None]
+        # RGB image
+        img_rec = Image.fromarray((img_rec * 255).type(torch.uint8).cpu().numpy().transpose(1, 2, 0))
+        anomaly_map = np.squeeze(score_map)
+        anomaly_map = anomaly_map / anomaly_map.max()
+        anomaly_map = cm.jet(anomaly_map)
+        anomaly_map = (anomaly_map[:, :, :3] * 255).astype('uint8')
+        anomaly_map = Image.fromarray(anomaly_map)  # bug here
+        img_rec_anomaly_map = Image.blend(img_rec, anomaly_map, alpha=0.4)
+        # mask
+        img_mask = Image.fromarray((gt_mask * 255).astype(np.uint8).transpose(1, 2, 0).repeat(3, axis=2))
+        # Save in figure in a row
+        fig, axes = plt.subplots(1, plot_cols, figsize=(fig_width, 4))
+        fig.suptitle(f"Debug Idx:{idx} - Actual Class: {actual_class_name} (Context: {run_context}) Epoch: {epoch_str}")
+
+        axes[0].imshow(img_rec)
+        axes[0].set_title("img_rec")
+        axes[0].axis('off')
+
+        axes[1].imshow(img_rec_anomaly_map)
+        axes[1].set_title("img_rec_anomaly_map")
+        axes[1].axis('off')
+
+        axes[2].imshow(img_mask, cmap='gray')
+        axes[2].set_title("Ground Truth Mask")
+        axes[2].axis('off')
+
+        plt.tight_layout(rect=[0, 0.03, 1, 0.95])  # Adjust layout to prevent title overlap
+        save_path = save_dir / f"debug_{model_name}_{run_context}_idx{idx}_{actual_class_name}_epoch_{epoch_str}_vis2.png"
+        plt.savefig(save_path)
+        plt.close(fig)
+
+
 
 
 # Function to run experiment for a SINGLE class
@@ -827,6 +867,7 @@ if __name__ == "__main__":
         logger.info(f"CUDA Device Name: {torch.cuda.get_device_name(0)}")
         logger.info(f"CUDA Capability: {torch.cuda.get_device_capability(0)}")
 
+
     # --- Wandb Initialization ---
     wandb_run = None
     # Determine wandb run name based on mode
@@ -862,6 +903,7 @@ if __name__ == "__main__":
     # --- Determine Experiment Mode ---
     all_results = []
     experiment_mode = "unknown"
+    classes_to_run = CLASS_NAMES
 
     if args.obj == 'all': # Run training for all classes separately
         classes_to_run = CLASS_NAMES
@@ -898,6 +940,7 @@ if __name__ == "__main__":
 
     elif args.obj in CLASS_NAMES: # Run for a single specified class
         class_name = args.obj
+        classes_to_run = class_name
         logger.info(f"Experiment Mode: Running experiment for a SINGLE class: {class_name}")
         experiment_mode = "single_class"
         try:
