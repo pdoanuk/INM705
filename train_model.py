@@ -8,6 +8,8 @@ import datetime
 import os
 import copy
 import time
+import sys
+import shutil
 import numpy as np
 import timm
 import torch
@@ -25,11 +27,50 @@ from torchvision import transforms
 from tqdm import tqdm
 
 from dataset_mvtec import get_dataloader
-from model_vit import ViTAutoencoder
+from model_vit import ViTAutoencoder, VitDecoderExp
 from utils_mvtec import *
 from config import args, CLASS_NAMES, mean_train, std_train
 from matplotlib import pyplot as plt
+from torchinfo import summary
+## wandb logging
+import wandb
+from wandb.sdk.lib.runid import generate_id
 
+
+def instantiate_logger() -> Logger:
+    """Instantiate a logger
+
+    Returns:
+        Logger: Logger
+    """
+    logger = Logger(
+        level=self.default_conf["logging"]["level"].upper(),
+        log_dir=Path(self.run_conf["logging"]["log_dir"]).resolve(),
+        comment="logs",
+        use_timestamp=False,
+    )
+    logger = logger.create_logger()
+    return logger
+
+## Setting up wandb
+
+currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
+parentdir = os.path.dirname(currentdir)
+sys.path.insert(0, parentdir)
+
+wandb_run_id = generate_id()
+run_name = f"{datetime.datetime.now().strftime('%Y-%m-%dT%H%M%S')}_extra_comment"
+# Initialize wandb
+run = wandb.init(
+    project = "INM705-exp",
+    tags = "experiment",
+    name = run_name,
+    id = wandb_run_id,
+    dir= args,
+    mode= "online",
+    settings= wandb.Settings(start_method="fork")
+
+)
 
 
 # Define train pipeline
@@ -135,12 +176,12 @@ def full_test_pipeline(model, test_loader):
 
 
 # Set up default parameters
-
+#
 log_run_time = datetime.datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
 root_save_dir = args.save_dir
 save_dir= f"{root_save_dir}/{log_run_time}"
 os.makedirs(save_dir, exist_ok=True)
-
+#
 log_path = os.path.join(save_dir, 'log_{}_{}.txt'.format(args.obj, args.model))
 log = open(log_path, 'w')
 print(f"Logging to {log_path}")
@@ -153,7 +194,10 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 scaler = amp.GradScaler()
 
 # Initiate model
-model = ViTAutoencoder().to(device)
+#model = ViTAutoencoder().to(device)
+model = VitDecoderExp().to(device)
+# print(f"DECODER torch model info")
+# summary(model, input_size=(16, 3, 384, 384))
 # Optimizer
 # optimizer = optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-5)
 optimizer = optim.Adam(params=model.parameters(),
@@ -187,7 +231,8 @@ torch.save(save_model.state_dict(), final_model_name)
 # Release model
 model = None
 ## Reload model for evaluating and testing
-model_eval = ViTAutoencoder()
+#model_eval = ViTAutoencoder()
+model_eval = VitDecoderExp()
 model_eval.load_state_dict(torch.load(final_model_name))
 model_eval.to(device)
 
@@ -216,11 +261,11 @@ save_debug_image(test_loader=test_data,
 log.close()
 # Run full dataset======================================
 
-# save_dir = f"./saved_results/{log_run_time}"
-# os.makedirs(save_dir, exist_ok=True)
+
 print(f"Start training complete list.")
 item_list = CLASS_NAMES
-
+start_time_full_training = time.time()
+metrics_list = []
 for item_obj in item_list:
     start_time_epoch = time.time()
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
@@ -234,13 +279,30 @@ for item_obj in item_list:
 
     random_seed = 42
     set_seed(random_seed)
-    args.epochs = 100 # override value of epoch
+    args.epochs = 50 # override value of epoch
+    args.obj = item_obj # overrid value of object
     # Setup default working environment
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     scaler = amp.GradScaler()
 
     # Initiate model
-    model = ViTAutoencoder().to(device)
+    # VITAutoEncoder model
+    # model = ViTAutoencoder().to(device)
+    ## Custom Decoder model
+    model = VitDecoderExp().to(device)
+    # encoder = timm.create_model('vit_base_patch16_384', pretrained=True)
+    #
+    # model = nn.Sequential(encoder, DecoderExp()).to(device)
+    #
+    # print(f"VIT torch model info")
+    # summary(encoder, input_size=(16, 3, 384, 384))
+    # print(f"logger model:")
+    # for i in model.children(): print(i)
+
+    print(f"DECODER torch model info")
+    summary(model, input_size=(16, 3, 384, 384))
+
+
     # Optimizer
     # optimizer = optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-5)
     optimizer = optim.Adam(params=model.parameters(),
@@ -267,15 +329,22 @@ for item_obj in item_list:
 
         if epoch % 10 == 0:
             val_loss, save_model = val_pipeline(args=args, model=model, epoch=epoch, val_loader=val_data, log=log)
+            ## save model after validation
+            # val_model_name = os.path.join(save_dir, 'model_{}_{}_epoch_{}_model.pt'.format(args.obj, args.model, epoch))
+            # torch.save(model.state_dict(), val_model_name)
+            # log_write(f"Saving to {val_model_name}", log)
 
 
     final_model_name = os.path.join(save_dir, 'model_{}_{}_final_epoch_model.pt'.format(args.obj, args.model))
-    torch.save(save_model.state_dict(), final_model_name)
+    torch.save(model.state_dict(), final_model_name)
     log_write(f"Saving to {final_model_name}", log)
     # Release model
     model = None
     ## Reload model for evaluating and testing
-    model_eval = ViTAutoencoder()
+    #model_eval = ViTAutoencoder()
+    ## Custom Decoder model
+    # model_eval = nn.Sequential(encoder, DecoderExp())
+    model_eval = VitDecoderExp()
     model_eval.load_state_dict(torch.load(final_model_name))
     model_eval.to(device)
 
@@ -292,6 +361,16 @@ for item_obj in item_list:
     gt_mask = gt_mask.astype('int')
     per_pixel_rocauc = roc_auc_score(gt_mask.flatten(), seg_scores.flatten())
     log_write('ROC AUC of pixel: %.2f' % (per_pixel_rocauc), log)
+    # Append to list
+    training_time = time.time() - start_time_epoch
+    metric_item = {
+        "obj": str(item_obj),
+        "training_time": training_time,
+        "per_pixel_rocauc": per_pixel_rocauc,
+        "save_model": final_model_name
+    }
+    metrics_list.append(metric_item)
+
     log_write(f"generate debug images...", log)
     save_debug_image(test_loader=test_data,
                      test_imgs=test_imgs,
@@ -304,3 +383,9 @@ for item_obj in item_list:
     log_write(f"Completed training & testing {item_obj}., model path {final_model_name}", log)
     log_write(f"Total time: {time.time() - start_time_epoch}", log)
     log.close()
+
+print(f" Training complete {time.time() - start_time_full_training}")
+print(f"Object ==== RoC AUC === Duration")
+for metric_item in metrics_list:
+    print(f"{metric_item['obj']}  |  {metric_item['per_pixel_rocauc']}  |  {metric_item['training_time']}")
+
