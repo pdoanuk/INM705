@@ -88,6 +88,12 @@ class Evaluator(object):
         """
         start_run_time = time.time()
         # Filter results for the specified class
+        logger.info(f"Evaluating {cls_name}...")
+        if self.use_adeval:
+            logger.info("Evaluation with adeval support")
+        else:
+            logger.warning("Evaluation without adeval support")
+
         idxes = results['cls_names'] == cls_name
         if not np.any(idxes):
             logger.warning(f"No samples found for class '{cls_name}'. Skipping evaluation.")

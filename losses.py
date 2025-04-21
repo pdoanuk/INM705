@@ -2,9 +2,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from math import exp
+import numpy as np
 from typing import List, Union, Optional, Tuple
-
-# --- Helper Functions for SSIM ---
+from torch.optim.lr_scheduler import _LRScheduler
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+from timm.scheduler.cosine_lr import CosineLRScheduler
 
 def gaussian(window_size: int, sigma: float) -> torch.Tensor:
     """Generates a 1D Gaussian kernel."""
@@ -107,3 +109,23 @@ class CosLoss(nn.Module):
             total_loss += loss_per_pair * self.lam
 
         return total_loss / num_items if self.avg and num_items > 0 else total_loss
+
+
+class WarmCosineScheduler(_LRScheduler):
+
+    def __init__(self, optimizer, base_value, final_value, total_iters, warmup_iters=0, start_warmup_value=0, ):
+        self.final_value = final_value
+        self.total_iters = total_iters
+        warmup_schedule = np.linspace(start_warmup_value, base_value, warmup_iters)
+
+        iters = np.arange(total_iters - warmup_iters)
+        schedule = final_value + 0.5 * (base_value - final_value) * (1 + np.cos(np.pi * iters / len(iters)))
+        self.schedule = np.concatenate((warmup_schedule, schedule))
+
+        super(WarmCosineScheduler, self).__init__(optimizer)
+
+    def get_lr(self):
+        if self.last_epoch >= self.total_iters:
+            return [self.final_value for base_lr in self.base_lrs]
+        else:
+            return [self.schedule[self.last_epoch] for base_lr in self.base_lrs]
