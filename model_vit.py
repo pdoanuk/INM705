@@ -25,6 +25,8 @@ class VitDecoderExp(nn.Module):
         embed_dim = self.encoder.embed_dim
         num_patches = self.encoder.patch_embed.num_patches
         self.num_patches_side = int(num_patches ** 0.5)
+        self.norm_mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+        self.norm_std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
 
         # Project ViT output back to a spatial feature map
         self.proj = nn.Conv2d(embed_dim, 768, kernel_size=1)  # Reduce dimensionality
@@ -85,6 +87,15 @@ class VitDecoderExp(nn.Module):
         self.upscale = nn.UpsamplingBilinear2d((self.image_size, self.image_size))
         self.tanh = nn.Tanh()
 
+    def denormalize(self, x):
+
+        if x.device != self.norm_mean.device:
+            self.norm_mean = self.norm_mean.to(x.device)
+            self.norm_std = self.norm_std.to(x.device)
+        denorm_x = x * self.norm_std + self.norm_mean
+        return torch.clamp(denorm_x, 0., 1.)  # Clamp to valid image range
+
+
     def forward(self, x):
         input_h, input_w = x.shape[-2:]
         if input_h != self.image_size or input_w != self.image_size:
@@ -98,15 +109,17 @@ class VitDecoderExp(nn.Module):
         # Process features for decoder
         # Use only patch tokens
         patch_tokens = features[:, 1:, :]  # Exclude CLS token: (B, num_patches, embed_dim)
-        B, N, E = patch_tokens.shape
-        H = W = self.num_patches_side
-        patch_tokens_spatial = patch_tokens.permute(0, 2, 1).reshape(B, E, H, W)
-        # patch_tokens = patch_tokens.transpose(1, 2)
-        # patch_tokens_spatial = patch_tokens.reshape(features.shape[0], -1, self.image_size // self.patch_size,
-        #                   self.image_size // self.patch_size)
+        # Variant 1
+        # B, N, E = patch_tokens.shape
+        # H = W = self.num_patches_side
+        # patch_tokens_spatial = patch_tokens.permute(0, 2, 1).reshape(B, E, H, W)
+        # Variant 2
+        patch_tokens = patch_tokens.transpose(1, 2)
+        patch_tokens_spatial = patch_tokens.reshape(features.shape[0], -1, self.image_size // self.patch_size,
+                          self.image_size // self.patch_size)
         # Project and Decode
-        # projected_features = self.proj(patch_tokens_spatial)
-        reconstructed_x = self.decoder(patch_tokens_spatial)
+        projected_features = self.proj(patch_tokens_spatial)
+        reconstructed_x = self.decoder(projected_features)
         reconstructed_x = self.upscale(reconstructed_x)
         reconstructed_x = self.tanh(reconstructed_x)
 
