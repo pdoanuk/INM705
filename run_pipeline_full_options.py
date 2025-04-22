@@ -23,7 +23,7 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import wandb
 import logging # Use standard logging
-
+from scipy.ndimage import gaussian_filter
 from pathlib import Path
 
 from torch.utils.data import DataLoader
@@ -133,7 +133,8 @@ def train_epoch(
                     loss = criterion(feature_enc, feature_fus)  # Compare features
                 else:
                     x_hat = model(x)
-                    loss = criterion(x_hat, x)
+                    #loss = criterion(x_hat, x)
+                    loss = criterion(x, x_hat)
 
             scaler.scale(loss).backward()
             scaler.step(optimizer)
@@ -144,7 +145,8 @@ def train_epoch(
                 loss = criterion(feature_enc, feature_fus)
             else:
                 x_hat = model(x)
-                loss = criterion(x_hat, x)
+                #loss = criterion(x_hat, x)
+                loss = criterion(x, x_hat)
 
             loss.backward()
             optimizer.step()
@@ -195,8 +197,9 @@ def validate_epoch(
                         loss = criterion(feature_enc, feature_fus)  # Compare features
                     else:
                         x_hat = model(x)
-                        loss = criterion(x_hat, x)
-                    # feature_enc, feature_fus = model(x)
+                        #loss = criterion(x_hat, x)
+                        loss = criterion(x, x_hat)
+                        # feature_enc, feature_fus = model(x)
                     # loss = criterion(feature_enc, feature_fus)
             else:
                 if args.model == "ViTAD_Fusion":
@@ -205,8 +208,10 @@ def validate_epoch(
                     loss = criterion(feature_enc, feature_fus)  # Compare features
                 else:
                     x_hat = model(x)
-                    loss = criterion(x_hat, x)
-                # feature_enc, feature_fus = model(x)
+                    #loss = criterion(x_hat, x)
+                    loss = criterion(x, x_hat)
+
+                    # feature_enc, feature_fus = model(x)
                 # loss = criterion(feature_enc, feature_fus)
 
             batch_loss = loss.item()
@@ -280,16 +285,18 @@ def evaluate_performance(
                          # Only use features relevant for the loss (ViTAD compares enc/fus)
                      else:
                          x_hat = model(x)
-                         loss_px = loss_func(x_hat, x)
+                         #loss_px = loss_func(x_hat, x)
+                         loss_px = loss_func(x, x_hat)
 
-                    # feature_enc, feature_fus = model(x) # Get features
+                         # feature_enc, feature_fus = model(x) # Get features
             else:
                 if args.model == "ViTAD_Fusion":
                     feature_enc, feature_fus = model(x)  # Get features from ViTAD model
                     # Only use features relevant for the loss (ViTAD compares enc/fus)
                 else:
                     x_hat = model(x)
-                    loss_px = loss_func(x_hat, x)
+                    #loss_px = loss_func(x_hat, x)
+                    loss_px = loss_func(x, x_hat)
 
                 # feature_enc, feature_fus = model(x) # Get features
 
@@ -315,7 +322,16 @@ def evaluate_performance(
                     use_cos=True if args.loss_func == "CosLoss" else False
                 )
             else:
-                anomaly_map_batch = loss_px.mean(dim=1).cpu().numpy()
+                score_map = loss_px.cpu().numpy()
+                score_map = score_map.mean(1)
+                anomaly_map_batch = copy.deepcopy(score_map)
+
+                for i in range(anomaly_map_batch.shape[0]):
+                    anomaly_map_batch[i] = gaussian_filter(anomaly_map_batch[i], sigma=6)
+                # anomaly_map_batch.extend(anomaly_map_batch)
+
+                # recon_imgs.extend(x_hat.cpu().numpy())
+                #anomaly_map_batch = loss_px.mean(dim=1).cpu().numpy()
                 logger.info(f"anomaly_map_batch shape {anomaly_map_batch.shape}")
 
         except Exception as e:
