@@ -1,4 +1,10 @@
 # -*- coding: utf-8 -*-
+## TIMESTAMP @ 2025-04-23T09:00:45
+## author: phuocddat
+## start
+# Adapted and improved from original ViTAD & Timm Vision Transformer
+
+## end --
 import time
 import logging
 import math
