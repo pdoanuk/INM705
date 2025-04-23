@@ -29,19 +29,19 @@ args = EasyDict({
     'image_size': 256,
     'patch_size': 16,
     'device': 'cuda:0',
-    'batch_size': 16,
+    'batch_size': 32,
     'num_workers': 16,
-    'epochs': 100,
+    'epochs': 20,
     'warmup_epochs': 2,
-    'val_epochs': 20,
-    'loss_func': 'L2Loss', # CosLoss, L2Loss
+    'val_epochs': 10,
+    'loss_func': 'CosLoss', # CosLoss, L2Loss
     'lr': 1e-4 * 16 / 8, #0.001, # was 2e-4
     'weight_decay': 0.0001,
     'obj': 'full', # all: run all classes separate, full run all in one
     'val_ratio': 0.2,
     'save_dir': './saved_results_new/',
     'dataset_path': '/home/phuocddat/git-repo/cv/ADer/data/mvtec',
-    'model': 'VitDecoderExp', # 'ViTAD_Fusion', VitDecoderExp
+    'model': 'ViTAD_Fusion_v2', # 'ViTAD_Fusion', VitDecoderExp, 'ViTAD_Fusion_v2'
     'amp': True,
     'seed': 42,
     'beta1': 0.9,
@@ -50,8 +50,8 @@ args = EasyDict({
     'wandb_log': True,
     'mode': "online",
     'project': "INM705 - EXP",
-    'notes': 'AdamW, LRScheduler Cosine - adeEval enable. Evaluate every val_epoch _ Separate',  # Notes about the run, verbose description [str]
-    'log_comment': ' Some comment',  # Comment to add to name the local logging folder [str]
+    'notes': 'AdamW, LRScheduler Cosine - adeEval enable. Evaluate every val_epoch _ Separate classes VitDecoderExp',  # Notes about the run, verbose description [str]
+    'log_comment': 'Test mnew metrics--- VitDecoderExp Full combined dataset, CosLoss,',  # Comment to add to name the local logging folder [str]
     'wandb_dir': './wandb_log',  # Direcotry to store the wandb file. CAREFUL: Directory must exists [str]
     'log_dir': './logdir',  # Direcotry to store all logging related files and outputs [str]
     'level': 'info',  # Level of logging must be either ["critical", "error", "warning", "info", "debug"] [str]

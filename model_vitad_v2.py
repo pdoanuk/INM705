@@ -579,7 +579,7 @@ def create_and_load_model(model_cfg: Dict[str, Any]) -> nn.Module:
     return model
 
 
-# ========== ViTAD Main Model ==========
+# ========== ViTAD_v2 Main Model ==========
 class ViTAD_v2(nn.Module):
     """
     Vision Transformer for Anomaly Detection (ViTAD) model.
@@ -588,7 +588,7 @@ class ViTAD_v2(nn.Module):
     """
     def __init__(self, model_t_cfg: Dict[str, Any], model_f_cfg: Dict[str, Any], model_s_cfg: Dict[str, Any]):
         """
-        Initializes the ViTAD model by creating its components.
+        Initializes the ViTAD_v2 model by creating its components.
 
         Args:
             model_t_cfg (dict): Configuration dictionary for the teacher model (ViTEncoder).
@@ -625,7 +625,7 @@ class ViTAD_v2(nn.Module):
         # Freeze the teacher network
         self.freeze_teacher()
 
-        logger.info("--- ViTAD Initialization Complete ---")
+        logger.info("--- ViTAD_v2 Initialization Complete ---")
         logger.info(f"Teacher params (M): {get_net_params(self.net_t):.2f} (Frozen)")
         logger.info(f"Fusion params (M): {get_net_params(self.net_fusion):.2f}")
         logger.info(f"Student params (M): {get_net_params(self.net_s):.2f}")
@@ -639,23 +639,23 @@ class ViTAD_v2(nn.Module):
             param.requires_grad = False
 
     def train(self, mode: bool = True):
-        """ Sets the training mode for the ViTAD model. Teacher remains frozen. """
+        """ Sets the training mode for the ViTAD_v2 model. Teacher remains frozen. """
         self.training = mode
         # Teacher is always frozen and in eval mode
         self.net_t.eval()
         # Set mode for fusion and student networks
         self.net_fusion.train(mode)
         self.net_s.train(mode)
-        logger.debug(f"ViTAD set to {'train' if mode else 'eval'} mode. Teacher remains frozen.")
+        logger.debug(f"ViTAD_v2 set to {'train' if mode else 'eval'} mode. Teacher remains frozen.")
         return self
 
     def eval(self):
-        """ Sets the ViTAD model to evaluation mode. """
+        """ Sets the ViTAD_v2 model to evaluation mode. """
         return self.train(False)
 
     def forward(self, imgs: torch.Tensor) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
         """
-        Forward pass through the ViTAD model.
+        Forward pass through the ViTAD_v2 model.
 
         Args:
             imgs (torch.Tensor): Input image batch (B, C, H, W).
@@ -689,16 +689,16 @@ class ViTAD_v2(nn.Module):
 
 # ========== Default Model Loading Example ==========
 
-def load_default_vitad_model(device: Optional[Union[str, torch.device]] = None) -> ViTAD:
+def load_default_vitad_model(device: Optional[Union[str, torch.device]] = None) -> ViTAD_v2:
     """
-    Instantiates the ViTAD model with a default configuration
+    Instantiates the ViTAD_v2 model with a default configuration
     (e.g., ViT-Small DINO teacher, corresponding decoder).
 
     Args:
         device (Optional[Union[str, torch.device]]): Device to move the model to ('cpu', 'cuda', etc.).
 
     Returns:
-        ViTAD: The instantiated ViTAD model.
+        ViTAD: The instantiated ViTAD_v2 model.
     """
     image_size = 256  # Example image size
     patch_size = 16   # Must match teacher's patch size
@@ -756,20 +756,20 @@ def load_default_vitad_model(device: Optional[Union[str, torch.device]] = None) 
         )
     }
 
-    logger.info("Instantiating ViTAD with default configuration...")
+    logger.info("Instantiating ViTAD_v2 with default configuration...")
     try:
         net = ViTAD_v2(
             model_t_cfg=model_t_cfg,
             model_f_cfg=model_f_cfg,
             model_s_cfg=model_s_cfg
         )
-        logger.info("ViTAD model instantiated successfully.")
+        logger.info("ViTAD_v2 model instantiated successfully.")
         if device:
             net = net.to(device)
-            logger.info(f"Moved ViTAD model to device: {device}")
+            logger.info(f"Moved ViTAD_v2 model to device: {device}")
 
     except Exception as e:
-        logger.error(f"!!! Error during ViTAD instantiation: {e} !!!", exc_info=True)
+        logger.error(f"!!! Error during ViTAD_v2 instantiation: {e} !!!", exc_info=True)
 
         raise
 
@@ -781,7 +781,7 @@ if __name__ == "__main__":
 
         logging.getLogger().setLevel(logging.DEBUG)
 
-        print("Testing default ViTAD model creation...")
+        print("Testing default ViTAD_v2 model creation...")
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
         model = load_default_vitad_model(device=device)
         print(f"Model loaded successfully on {device}.")

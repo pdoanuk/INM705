@@ -37,6 +37,7 @@ from PIL import Image
 try:
     from dataset_mvtec import get_dataloader, get_loader_full
     from model_vitad import load_default_model # Using ViTAD model with manual loading function
+    from model_vitad_v2 import load_default_vitad_model
     from model_vit import ViTAutoencoder, VitDecoderExp
     from losses import L2Loss, CosLoss, KLLoss # L1Loss, CosLoss also available
     from utils_mvtec import set_seed, denormalization, log_write # Keep utility functions
@@ -63,6 +64,8 @@ def get_model(device: torch.device) -> nn.Module:
     """
     """This one is only for ViTAD-based model"""
     if args.model == "ViTAD_Fusion":
+        model = load_default_model().to(device)
+    elif args.model == "ViTAD_Fusion_v2":
         model = load_default_model().to(device)
     elif args.model == "VitDecoderExp":
         model = VitDecoderExp().to(device)
@@ -127,7 +130,7 @@ def train_epoch(
 
         if args.amp:
             with amp.autocast():
-                if args.model == "ViTAD_Fusion":
+                if args.model.startswith("ViTAD_Fusion"):
                     feature_enc, feature_fus = model(x)  # Get features from ViTAD model
                     # Only use features relevant for the loss (ViTAD compares enc/fus)
                     loss = criterion(feature_enc, feature_fus)  # Compare features
@@ -140,7 +143,7 @@ def train_epoch(
             scaler.step(optimizer)
             scaler.update()
         else:
-            if args.model == "ViTAD_Fusion":
+            if args.model.startswith("ViTAD_Fusion"):
                 feature_enc, feature_fus = model(x)
                 loss = criterion(feature_enc, feature_fus)
             else:
@@ -191,7 +194,7 @@ def validate_epoch(
             x = x.to(device)
             if args.amp:
                 with amp.autocast():
-                    if args.model == "ViTAD_Fusion":
+                    if args.model.startswith("ViTAD_Fusion"):
                         feature_enc, feature_fus = model(x)  # Get features from ViTAD model
                         # Only use features relevant for the loss (ViTAD compares enc/fus)
                         loss = criterion(feature_enc, feature_fus)  # Compare features
@@ -202,7 +205,7 @@ def validate_epoch(
                         # feature_enc, feature_fus = model(x)
                     # loss = criterion(feature_enc, feature_fus)
             else:
-                if args.model == "ViTAD_Fusion":
+                if args.model.startswith("ViTAD_Fusion"):
                     feature_enc, feature_fus = model(x)  # Get features from ViTAD model
                     # Only use features relevant for the loss (ViTAD compares enc/fus)
                     loss = criterion(feature_enc, feature_fus)  # Compare features
@@ -280,7 +283,7 @@ def evaluate_performance(
         with torch.no_grad():
             if args.amp:
                  with amp.autocast():
-                     if args.model == "ViTAD_Fusion":
+                     if args.model.startswith("ViTAD_Fusion"):
                          feature_enc, feature_fus = model(x)  # Get features from ViTAD model
                          # Only use features relevant for the loss (ViTAD compares enc/fus)
                      else:
@@ -290,7 +293,7 @@ def evaluate_performance(
 
                          # feature_enc, feature_fus = model(x) # Get features
             else:
-                if args.model == "ViTAD_Fusion":
+                if args.model.startswith("ViTAD_Fusion"):
                     feature_enc, feature_fus = model(x)  # Get features from ViTAD model
                     # Only use features relevant for the loss (ViTAD compares enc/fus)
                 else:
@@ -301,7 +304,7 @@ def evaluate_performance(
                 # feature_enc, feature_fus = model(x) # Get features
 
         # --- Anomaly Map Calculation ---
-        if args.model == "ViTAD_Fusion":
+        if args.model.startswith("ViTAD_Fusion"):
             if not isinstance(feature_enc, list): feature_enc = [feature_enc]
             if not isinstance(feature_fus, list): feature_fus = [feature_fus]
             # Ensure features are valid before calculation
@@ -311,7 +314,7 @@ def evaluate_performance(
                     continue  # Skip this batch
 
         try:
-            if args.model == "ViTAD_Fusion":
+            if args.model.startswith("ViTAD_Fusion"):
                 anomaly_map_batch, _ = Evaluator.cal_anomaly_map(
                     ft_list=feature_enc,
                     fs_list=feature_fus,

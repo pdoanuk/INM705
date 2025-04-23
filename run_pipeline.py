@@ -93,7 +93,8 @@ def train_epoch(
     total_loss = 0.0
     pbar = tqdm(dataloader, desc=f"Epoch {epoch}/{args.epochs} [Train]")
 
-    for x, _, _ in pbar:
+    #for x, _, _ in pbar:
+    for x, y, mask, cls_name in pbar:
         x = x.to(device)
         optimizer.zero_grad()
 
@@ -131,7 +132,8 @@ def validate_epoch(
     pbar = tqdm(dataloader, desc=f"Epoch {epoch}/{args.epochs} [Val]")
 
     with torch.no_grad():
-        for x, _, _ in pbar:
+        #for x, _, _ in pbar:
+        for x, y, mask, cls_name in pbar:
             x = x.to(device)
             if args.amp:
                 with amp.autocast():
@@ -160,9 +162,9 @@ def evaluate_performance(
 ) -> Tuple[float, float]:
     """Runs the full test evaluation pipeline."""
     model.eval()
-    # mse_loss_func = nn.MSELoss(reduction='none') # Per-pixel MSE for anomaly maps
+    mse_loss_func = nn.MSELoss(reduction='none') # Per-pixel MSE for anomaly maps
     # mse_loss_func = L2Loss(reduction='none')
-    mse_loss_func = CosLoss()
+    #mse_loss_func = CosLoss()
 
     det_scores, seg_scores = [], []
     test_imgs_list, gt_list, gt_mask_list, recon_imgs_list = [], [], [], []
@@ -170,7 +172,8 @@ def evaluate_performance(
     print(f"Running evaluation for class: {class_name}...")
     pbar = tqdm(test_loader, desc=f"Evaluation [{class_name}]")
 
-    for (x, label, mask) in pbar:
+    #for (x, label, mask) in pbar:
+    for (x, label, mask, cls_name) in pbar:
         test_imgs_list.extend(x.cpu().numpy())
         gt_list.extend(label.cpu().numpy())
         gt_mask_list.extend(mask.squeeze(0).cpu().numpy())
@@ -346,9 +349,9 @@ def run_experiment(
     # --- Model, Optimizer, Criterion, Scaler ---
     model = get_model(device)
     optimizer = get_optimizer(model)
-    # criterion = nn.MSELoss()
+    criterion = nn.MSELoss()
     #criterion = L2Loss()
-    criterion = CosLoss()
+    #criterion = CosLoss()
 
     scaler = amp.GradScaler(enabled=args.amp)
 
