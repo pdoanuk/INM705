@@ -38,7 +38,7 @@ try:
     from dataset_mvtec import get_dataloader, get_loader_full
     from model_vitad import load_default_model # Using ViTAD model with manual loading function
     from model_vit import ViTAutoencoder, VitDecoderExp
-    from losses import L2Loss, CosLoss # L1Loss, CosLoss also available
+    from losses import L2Loss, CosLoss, KLLoss # L1Loss, CosLoss also available
     from utils_mvtec import set_seed, denormalization, log_write # Keep utility functions
     from config import *
     from metrics import Evaluator
@@ -583,6 +583,8 @@ def run_experiment(
         criterion = L2Loss().to(device) # Ensure loss is on the correct device
     elif args.loss_func == "CosLoss":
         criterion = CosLoss().to(device)
+    elif args.loss_func == "KLLoss":
+        criterion = KLLoss().to(device)
     else:
         logger.info(f"{args.loss_func} was not supported yet, using default L2Loss")
         args.loss_func = "L2Loss"
@@ -773,6 +775,8 @@ def run_experiment_all(
         criterion = L2Loss().to(device) # Ensure loss is on the correct device
     elif args.loss_func == "CosLoss":
         criterion = CosLoss().to(device)
+    elif args.loss_func == "KLLoss":
+        criterion = KLLoss().to(device)
     else:
         logger.info(f"{args.loss_func} was not supported yet, using default L2Loss")
         args.loss_func =  "L2Loss"
@@ -934,7 +938,7 @@ if __name__ == "__main__":
     run_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
     # Base directory for all runs initiated by this script execution
-    base_save_dir = Path(args_save_dir) / f"run_{run_timestamp}"
+    base_save_dir = Path(args_save_dir) / f"run_{run_timestamp}_{args.model}_{args.obj}_{args.loss_func}_{args.epochs}"
     base_save_dir.mkdir(parents=True, exist_ok=True)
     logger.info(f"Base save directory for this run: {base_save_dir}")
 
@@ -1080,12 +1084,17 @@ if __name__ == "__main__":
                 logger.info(row)
 
                 # Add to aggregation only if running separate classes
-                if experiment_mode == "all_separate":
-                    for m, v in zip(summary_metrics, metric_values):
-                        if not np.isnan(v):
-                            aggregated_metrics[m].append(v)
-                    completed_count += 1
-                    total_time += time_s
+                for m, v in zip(summary_metrics, metric_values):
+                    if not np.isnan(v):
+                        aggregated_metrics[m].append(v)
+                completed_count += 1
+                total_time += time_s
+                # if experiment_mode == "all_separate":
+                #     for m, v in zip(summary_metrics, metric_values):
+                #         if not np.isnan(v):
+                #             aggregated_metrics[m].append(v)
+                #     completed_count += 1
+                #     total_time += time_s
             else:
                 error_msg = result.get('error', 'Unknown')
                 row = f"{context:<15} | {status:<10} | " + " | ".join(['N/A'.center(15)] * len(summary_metrics)) + f" | {'N/A':<10}"
@@ -1093,7 +1102,8 @@ if __name__ == "__main__":
                 logger.warning(f"  -> Failed Run '{context}' Reason: {error_msg}")
 
         # Display average only if multiple separate classes were run successfully
-        if experiment_mode == "all_separate" and completed_count > 0:
+        #if experiment_mode == "all_separate" and completed_count > 0:
+        if completed_count > 0:
              avg_metrics = {m: np.mean(vals) for m, vals in aggregated_metrics.items() if vals}
              avg_metric_values = [avg_metrics.get(m, np.nan) for m in summary_metrics]
              avg_time = total_time / completed_count
