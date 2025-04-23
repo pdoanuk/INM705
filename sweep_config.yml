@@ -1,0 +1,26 @@
+program: run_pipeline_full_options_sweep.py # Your main script file
+method: bayes # Search strategy: bayes, random, grid
+metric:
+  name: average/mAUROC_px # Metric to optimize (logged to wandb summary)
+  goal: maximize # maximize or minimize
+parameters:
+  loss_func:
+    distribution: categorical
+    values:
+    - "L2Loss"
+    - "CosLoss" # Test different loss functions
+  model:
+     distribution: categorical
+     values:
+     - "VitDecoderExp"
+     - "ViTAD_Fusion" # If you implement the other
+  obj:
+    distribution: categorical
+    values:
+    - "all"
+    - "full"
+  epochs:
+    value: 100
+  val_epochs:
+    value: 20
+
