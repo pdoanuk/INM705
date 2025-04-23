@@ -26,7 +26,7 @@ std_train = [0.229, 0.224, 0.225]
 
 
 SINGLE_CLASS_MODE = "title" #
-ALL_CLASSES_SEPARATELY_MODE = "all" # all. full SINGLE_CLASS_NAME - SWEEP
+ALL_CLASSES_SEPARATELY_MODE = "full" # all. full SINGLE_CLASS_NAME - SWEEP
 
 # --- Default Configuration Values (will be parsed by argparse) ---
 DEFAULT_CONFIG = {
@@ -42,12 +42,12 @@ DEFAULT_CONFIG = {
     'obj': ALL_CLASSES_SEPARATELY_MODE, # Default: run all classes separately
     'image_size': 256,
     'patch_size': 16, # Tunable - ViT parameter
-    'model': 'VitDecoderExp', # Tunable - Model variant ('VitDecoderExp', 'ViTAD_Fusion') Sweep
+    'model': 'ViTAD_Fusion_v2', # Tunable - Model variant ('VitDecoderExp', 'ViTAD_Fusion', 'ViTAD_Fusion_v2) Sweep
     'val_ratio': 0.2, # Validation split ratio (if applicable in dataset loading)
 
     # --- Training ---
     'epochs': 100, # Tunable
-    'batch_size': 16, # Tunable
+    'batch_size': 16, # Tunable 8, 16, 32
     'warmup_epochs': 2,
     'val_epochs': 10,
     'early_stopping_patience': 12,
