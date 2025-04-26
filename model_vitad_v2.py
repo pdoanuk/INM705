@@ -168,7 +168,7 @@ class ViTDecoder(nn.Module):
         num_heads: int,
         mlp_ratio: float = 4.,
         qkv_bias: bool = True,
-        qk_scale: Optional[float] = None,
+        #qk_scale: Optional[float] = None,
         drop_rate: float = 0.,
         attn_drop_rate: float = 0.,
         drop_path_rate: float = 0.,
@@ -217,11 +217,11 @@ class ViTDecoder(nn.Module):
 
         # Stochastic depth decay rule
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]
-
+        #attn_layer_partial = partial(Attention, qk_scale=qk_scale)
         # Transformer blocks
         self.blocks = nn.ModuleList([
             Block(
-                dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias,
                 drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer, act_layer=act_layer
             )
             for i in range(depth)])
@@ -395,7 +395,7 @@ def _create_vit_decoder(base_kwargs: Dict[str, Any], **kwargs) -> ViTDecoder:
         num_heads=model_kwargs['num_heads'],
         mlp_ratio=model_kwargs.get('mlp_ratio', 4.0),
         qkv_bias=model_kwargs.get('qkv_bias', True),
-        qk_scale=model_kwargs.get('qk_scale', None),
+        #qk_scale=model_kwargs.get('qk_scale', None),
         drop_rate=model_kwargs.get('drop_rate', 0.0),
         attn_drop_rate=model_kwargs.get('attn_drop_rate', 0.0),
         drop_path_rate=model_kwargs.get('drop_path_rate', 0.0),
@@ -608,8 +608,6 @@ class ViTAD_v2(nn.Module):
         logger.debug(f"Fusion Config: {model_f_cfg}")
         logger.debug(f"Student Config: {model_s_cfg}")
 
-        # --- Validate Configurations ---
-        self._validate_configs(model_t_cfg, model_f_cfg, model_s_cfg)
 
         # --- Create Sub-models ---
         logger.info("Creating Teacher Network (net_t)...")

@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import timm
+from timm.models import vision_transformer
 from config import args
 ## TIMESTAMP @ 2025-04-10T23:45:47
 ## author: phuocddat
@@ -130,7 +131,13 @@ class VitDecoderExp(nn.Module):
 class ViTAutoencoder(nn.Module):
     def __init__(self, model_name='vit_base_patch16_224', pretrained=True):
         super().__init__()
-        self.encoder = timm.create_model(model_name, pretrained=pretrained)
+        self.image_size = args.image_size
+        self.patch_size = args.patch_size
+        if self.image_size % self.patch_size != 0:
+            raise ValueError(f"Image size ({self.image_size}) must be divisible by patch size ({self.patch_size})")
+
+        self.encoder = timm.create_model(model_name, pretrained=pretrained, img_size=self.image_size)
+
         # Remove the classification head
         self.encoder.head = nn.Identity()
 
