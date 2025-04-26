@@ -849,7 +849,7 @@ def run_experiment_all(
     logger.info(f"Starting training on combined dataset for {class_args.epochs} epochs...")
     for epoch in range(1, class_args.epochs + 1):
         # Pass context_name to training functions
-        train_loss = train_epoch(args, model, train_loader, optimizer, criterion, scaler, device, epoch, run_context=context_name)
+        train_loss = train_epoch(class_args, model, train_loader, optimizer, criterion, scaler, device, epoch, run_context=context_name)
         scheduler.step()
         current_lr = scheduler.get_last_lr()[0]
 

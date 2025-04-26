@@ -24,7 +24,7 @@ DEFAULT_IMAGE_TO_VISUAL = [1, 5, 10, 15]
 mean_train = [0.485, 0.456, 0.406]
 std_train = [0.229, 0.224, 0.225]
 
-
+FULL_DATASET_IDENTIFIER = 'full'
 SINGLE_CLASS_MODE = "title" #
 ALL_CLASSES_SEPARATELY_MODE = "full" # all. full SINGLE_CLASS_NAME - SWEEP
 
