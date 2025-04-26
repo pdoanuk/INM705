@@ -25,6 +25,7 @@ import wandb
 import logging # Use standard logging
 from scipy.ndimage import gaussian_filter
 from pathlib import Path
+import argparse
 
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -56,10 +57,11 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 DEBUG = True
 
-def get_model(device: torch.device) -> nn.Module:
+def get_model(args: argparse.Namespace ,device: torch.device) -> nn.Module:
     """Instantiates and returns the anomaly detection model.
 
     Args:
+        args: args
         device:
     """
     """This one is only for ViTAD-based model"""
@@ -71,8 +73,9 @@ def get_model(device: torch.device) -> nn.Module:
         model = VitDecoderExp().to(device)
     else:
         logger.info(f"Using model {args.model} was not supported yet")
-
-    logger.info(f"Using model: {model.__class__.__name__} loading on {device}")
+        sys.exit(1)
+    if model is not None:
+        logger.info(f"Using model: {model.__class__.__name__} loading on {device}")
     if DEBUG:
         try:
             summary(model, input_size=(args.batch_size, 3, args.image_size, args.image_size), device=device)
@@ -80,20 +83,40 @@ def get_model(device: torch.device) -> nn.Module:
             logger.warning(f"Could not generate model summary: {e}")
     return model
 
-def get_optimizer(model: nn.Module) -> optim.Optimizer:
-    """Instantiates and returns the optimizer.
+def get_optimizer(args: argparse.Namespace, model: nn.Module) -> optim.Optimizer:
+    """Instantiates and returns the optimizer based on args."""
+    lr = args.lr
+    wd = args.weight_decay
+    beta1 = args.beta1
+    beta2 = args.beta2
 
-    Args:
-        model:
-    """
-    # todo: MOVE TO DEDICATED FUNCTION LATER
-    optimizer = optim.AdamW(model.parameters(), betas=(0.9, 0.999), lr=args.lr, weight_decay=args.weight_decay,
-                            amsgrad=False)
-    logger.info(f"Using optimizer: {optimizer.__class__.__name__} with LR: {args.lr}, Weight Decay: {args.weight_decay}")
+    if args.optimizer.lower() == 'adamw':
+        optimizer = optim.AdamW(model.parameters(), lr=lr, betas=(beta1, beta2), weight_decay=wd, amsgrad=False)
+        logger.info(f"Using optimizer: AdamW with LR: {lr}, WD: {wd}")
+    elif args.optimizer.lower() == 'adam':
+        optimizer = optim.Adam(model.parameters(), lr=lr, betas=(beta1, beta2), weight_decay=wd)
+        logger.info(f"Using optimizer: Adam with LR: {lr}, WD: {wd}")
+    else:
+        logger.error(f"Unsupported optimizer type: {args.optimizer}")
+        sys.exit(1)
     return optimizer
 
+
+def get_criterion(args: argparse.Namespace) -> nn.Module:
+    """Instantiates and returns the loss function based on args."""
+    if args.loss_func.lower() == 'l2loss':
+        criterion = L2Loss()
+        logger.info("Using loss function: L2Loss")
+    elif args.loss_func.lower() == 'cosloss':
+        criterion = CosLoss()
+        logger.info("Using loss function: CosLoss")
+    else:
+        logger.error(f"Unsupported loss function: {args.loss_func}")
+        sys.exit(1)
+    return criterion
+
 def train_epoch(
-    args: Any,
+    args: argparse.Namespace,
     model: nn.Module,
     dataloader: DataLoader,
     optimizer: optim.Optimizer,
@@ -162,7 +185,7 @@ def train_epoch(
     return avg_loss
 
 def validate_epoch(
-    args: Any,
+    args: argparse.Namespace,
     model: nn.Module,
     dataloader: DataLoader,
     criterion: nn.Module,
@@ -226,6 +249,7 @@ def validate_epoch(
 
 
 def evaluate_performance(
+    args: argparse.Namespace,
     model: nn.Module,
     test_loader: DataLoader,
     epoch_number: Union[int, str, None], # Can be int epoch or 'final'
@@ -535,7 +559,7 @@ def save_debug_images(
 
 # Function to run experiment for a SINGLE class
 def run_experiment(
-    args: Any,
+    args: argparse.Namespace,
     class_name: str, # Specific class name
     base_save_dir: Path,
     device: torch.device,
@@ -555,6 +579,10 @@ def run_experiment(
     logger.info(f" Starting Experiment for Class: {class_name} ")
     logger.info("="*50 + "\n")
 
+    class_args = copy.deepcopy(args) # Make a copy if needed, but often not required with sweeps
+    class_args.obj = class_name # Set the class name in args for dataloader
+    set_seed(class_args.seed) # Set seed for reproducibility for this specific run
+
     start_time = time.time()
 
     # --- Setup for the specific class ---
@@ -562,8 +590,8 @@ def run_experiment(
     set_seed(args.seed) # Set seed for reproducibility for this specific run
 
     # Create specific save directory for this class run
-    run_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    current_save_dir = base_save_dir / f"{class_name}_{args.model}_{run_timestamp}"
+    run_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    current_save_dir = base_save_dir / f"{class_name}_{class_args.model}_{run_timestamp}"
     current_save_dir.mkdir(parents=True, exist_ok=True)
     logger.info(f"Saving results for class '{class_name}' to: {current_save_dir}")
 
@@ -571,8 +599,8 @@ def run_experiment(
     logger.info(f"Loading datasets for class: {class_name}...")
     try:
         # Use get_loader for single class
-        args.obj = class_name
-        train_loader, val_loader, test_loader = get_dataloader(args)
+        class_args.obj = class_name
+        train_loader, val_loader, test_loader = get_dataloader(class_args)
         logger.info(f"Train batches: {len(train_loader)}, Val batches: {len(val_loader)}, Test batches: {len(test_loader)}")
         logger.info(f"Approx Train samples: {len(train_loader.dataset)}, Approx Val samples: {len(val_loader.dataset)}, Test samples: {len(test_loader.dataset)}")
     except Exception as e:
@@ -580,22 +608,23 @@ def run_experiment(
         return {"class": class_name, "status": "failed", "error": f"Dataloader error: {e}"}
 
     # --- Model, Optimizer, Criterion, Scaler ---
-    model = get_model(device)
-    optimizer = get_optimizer(model)
-    if args.loss_func == "L2Loss":
-        criterion = L2Loss().to(device) # Ensure loss is on the correct device
-    elif args.loss_func == "CosLoss":
-        criterion = CosLoss().to(device)
-    elif args.loss_func == "KLLoss":
-        criterion = KLLoss().to(device)
-    else:
-        logger.info(f"{args.loss_func} was not supported yet, using default L2Loss")
-        args.loss_func = "L2Loss"
-        criterion = L2Loss().to(device) # Ensure loss is on the correct device
+    model = get_model(args=class_args, device=device)
+    optimizer = get_optimizer(args=class_args, model=model)
+    criterion = get_criterion(args=class_args).to(device)
+    # if args.loss_func == "L2Loss":
+    #     criterion = L2Loss().to(device) # Ensure loss is on the correct device
+    # elif args.loss_func == "CosLoss":
+    #     criterion = CosLoss().to(device)
+    # elif args.loss_func == "KLLoss":
+    #     criterion = KLLoss().to(device)
+    # else:
+    #     logger.info(f"{args.loss_func} was not supported yet, using default L2Loss")
+    #     args.loss_func = "L2Loss"
+    #     criterion = L2Loss().to(device) # Ensure loss is on the correct device
 
-    logger.info(f"Loss function: {args.loss_func}")
+    logger.info(f"Loss function: {class_args.loss_func}")
 
-    scaler = amp.GradScaler(enabled=args.amp)
+    scaler = amp.GradScaler(enabled=class_args.amp)
 
     # --- Instantiate Evaluator ---
     evaluator = Evaluator(
@@ -603,23 +632,23 @@ def run_experiment(
         pooling_ks=None, # Adjust if needed
         max_step_aupro=100, # Default
         mp=False, # Set to True to try multiprocessing for AUPRO
-        use_adeval=args.use_adeval if hasattr(args, 'use_adeval') else False
+        use_adeval=class_args.use_adeval if hasattr(class_args, 'use_adeval') else False
     )
 
     # --- Training Loop ---
     best_val_loss = float('inf')
     epochs_without_improvement = 0
-    best_model_path = current_save_dir / f"model_{class_name}_{args.model}_best.pt"
+    best_model_path = current_save_dir / f"model_{class_name}_{class_args.model}_best.pt"
     all_metrics = {} # To store metrics from the last evaluation
 
-    logger.info(f"Starting training for {args.epochs} epochs...")
-    for epoch in range(1, args.epochs + 1):
-        train_loss = train_epoch(args, model, train_loader, optimizer, criterion, scaler, device, epoch, run_context=class_name)
+    logger.info(f"Starting training for {class_args.epochs} epochs...")
+    for epoch in range(1, class_args.epochs + 1):
+        train_loss = train_epoch(class_args, model, train_loader, optimizer, criterion, scaler, device, epoch, run_context=class_name)
 
         # Validation and potential early stopping
-        if epoch % args.val_epochs == 0 or epoch == args.epochs: # Validate on schedule or last epoch
-            val_loss = validate_epoch(args, model, val_loader, criterion, device, epoch, run_context=class_name)
-            logger.info(f"Epoch {epoch}/{args.epochs} => Class: {class_name}, Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}")
+        if epoch % class_args.val_epochs == 0 or epoch == class_args.epochs: # Validate on schedule or last epoch
+            val_loss = validate_epoch(class_args, model, val_loader, criterion, device, epoch, run_context=class_name)
+            logger.info(f"Epoch {epoch}/{class_args.epochs} => Class: {class_name}, Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}")
 
             log_dict = {
                 f"{class_name}/train_loss": train_loss,
@@ -627,9 +656,10 @@ def run_experiment(
                 "epoch": epoch # Log epoch globally
             }
 
-            if epoch % args.val_epochs == 0 or epoch == args.epochs:
+            if epoch % class_args.val_epochs == 0 or epoch == class_args.epochs:
                  logger.info(f"Running evaluation at epoch {epoch}...")
                  all_metrics = evaluate_performance(
+                     args=class_args,
                      model=model,
                      test_loader=test_loader,
                      epoch_number=epoch,
@@ -658,11 +688,10 @@ def run_experiment(
                  wandb.log(log_dict)
 
 
-
     logger.info(f"Training finished for class {class_name}.")
 
     # --- Final Model Saving ---
-    final_model_path = current_save_dir / f"model_{class_name}_{args.model}_final.pt"
+    final_model_path = current_save_dir / f"model_{class_name}_{class_args.model}_final.pt"
     torch.save(model.state_dict(), final_model_path)
     logger.info(f"Saved final model to {final_model_path}")
 
@@ -676,7 +705,7 @@ def run_experiment(
         logger.warning(f"Best model checkpoint not found at {best_model_path}. Using final model for evaluation.")
 
     # Re-instantiate model structure and load state dict
-    eval_model = get_model(device) # Get a fresh instance
+    eval_model = get_model(args=class_args, device=device) # Get a fresh instance
     try:
         eval_model.load_state_dict(torch.load(load_path, map_location=device))
         logger.info(f"Successfully loaded model weights from {load_path}")
@@ -687,6 +716,7 @@ def run_experiment(
     logger.info(f"\n--- Running Final Evaluation for Class: {class_name} ---")
 
     final_eval_metrics = evaluate_performance(
+        args=class_args,
         model=eval_model, # Use the loaded model
         test_loader=test_loader,
         epoch_number='final', # Indicate final evaluation
@@ -721,11 +751,21 @@ def run_experiment(
         wandb.summary[f"{class_name}/training_time_seconds"] = duration
         wandb.summary[f"{class_name}/best_val_loss"] = results["best_val_loss"]
 
+    if wandb_run and class_args.log_images and (current_save_dir / "eval_debug_final").exists():
+        try:
+            debug_img_folder = current_save_dir / "eval_debug_final"
+            img_paths = list(debug_img_folder.glob("debug_*.png"))
+            if img_paths:
+                wandb.log({f"{class_name}/debug_images": [wandb.Image(str(p)) for p in img_paths]})
+                logger.info(f"Logged {len(img_paths)} debug images to WandB.")
+        except Exception as e:
+            logger.error(f"Failed to log debug images to WandB: {e}")
+
     return results
 
 
 def run_experiment_all(
-    args: Any,
+    args: argparse.Namespace,
     base_save_dir: Path,
     device: torch.device,
     wandb_run: Optional[wandb.sdk.wandb_run.Run] = None,
@@ -749,12 +789,14 @@ def run_experiment_all(
     start_time = time.time()
 
     # --- Setup for the full dataset run ---
-    set_seed(args.seed) # Set seed for reproducibility
+    class_args = copy.deepcopy(args)
+    set_seed(class_args.seed) # Set seed for reproducibility for this specific run
+
 
     # Create specific save directory for this full run
-    run_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     # Use the context_name in the directory
-    current_save_dir = base_save_dir / f"{context_name}_{args.model}_{run_timestamp}"
+    current_save_dir = base_save_dir / f"{context_name}_{class_args.model}_{run_timestamp}"
     current_save_dir.mkdir(parents=True, exist_ok=True)
     logger.info(f"Saving results for '{context_name}' run to: {current_save_dir}")
 
@@ -762,7 +804,7 @@ def run_experiment_all(
     logger.info(f"Loading combined dataset for categories: {'ALL' if list_categories is None else list_categories}...")
     try:
         # Use get_loader_full for the combined dataset
-        train_loader, val_loader, test_loader = get_loader_full(args, list_categories=list_categories)
+        train_loader, val_loader, test_loader = get_loader_full(class_args, list_categories=list_categories)
         logger.info(f"Train batches: {len(train_loader)}, Val batches: {len(val_loader)}, Test batches: {len(test_loader)}")
         # Note: len(loader.dataset) on ConcatDataset gives total size
         logger.info(f"Total Train samples: {len(train_loader.dataset)}, Total Val samples: {len(val_loader.dataset)}, Total Test samples: {len(test_loader.dataset)}")
@@ -771,40 +813,41 @@ def run_experiment_all(
         return {"class": context_name, "status": "failed", "error": f"Dataloader error: {e}"}
 
     # --- Model, Optimizer, Criterion, Scaler ---
-    model = get_model(device)
-    optimizer = get_optimizer(model)
+    model = get_model(args= class_args, device=device)
+    optimizer = get_optimizer(args=class_args, model=model)
+    criterion = get_criterion(args=class_args).to(device=device)
     #criterion = L2Loss().to(device)
-    if args.loss_func == "L2Loss":
-        criterion = L2Loss().to(device) # Ensure loss is on the correct device
-    elif args.loss_func == "CosLoss":
-        criterion = CosLoss().to(device)
-    elif args.loss_func == "KLLoss":
-        criterion = KLLoss().to(device)
-    else:
-        logger.info(f"{args.loss_func} was not supported yet, using default L2Loss")
-        args.loss_func =  "L2Loss"
-        criterion = L2Loss().to(device) # Ensure loss is on the correct device
+    # if args.loss_func == "L2Loss":
+    #     criterion = L2Loss().to(device) # Ensure loss is on the correct device
+    # elif args.loss_func == "CosLoss":
+    #     criterion = CosLoss().to(device)
+    # elif args.loss_func == "KLLoss":
+    #     criterion = KLLoss().to(device)
+    # else:
+    #     logger.info(f"{args.loss_func} was not supported yet, using default L2Loss")
+    #     args.loss_func =  "L2Loss"
+    #     criterion = L2Loss().to(device) # Ensure loss is on the correct device
 
-    logger.info(f"Loss function: {args.loss_func}")
-    scaler = amp.GradScaler(enabled=args.amp)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
+    logger.info(f"Loss function: {class_args.loss_func}")
+    scaler = amp.GradScaler(enabled=class_args.amp)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=class_args.epochs, eta_min=1e-6)
     # --- Instantiate Evaluator ---
     evaluator = Evaluator(
         metrics=METRICS_TO_COMPUTE,
         pooling_ks=None,
         max_step_aupro=100,
         mp=False,
-        use_adeval=args.use_adeval if hasattr(args, 'use_adeval') else False
+        use_adeval=class_args.use_adeval if hasattr(class_args, 'use_adeval') else False
     )
 
     # --- Training Loop ---
     best_val_loss = float('inf')
     epochs_without_improvement = 0
-    best_model_path = current_save_dir / f"model_{context_name}_{args.model}_best.pt"
+    best_model_path = current_save_dir / f"model_{context_name}_{class_args.model}_best.pt"
     all_metrics = {} # To store metrics from the last evaluation
 
-    logger.info(f"Starting training on combined dataset for {args.epochs} epochs...")
-    for epoch in range(1, args.epochs + 1):
+    logger.info(f"Starting training on combined dataset for {class_args.epochs} epochs...")
+    for epoch in range(1, class_args.epochs + 1):
         # Pass context_name to training functions
         train_loss = train_epoch(args, model, train_loader, optimizer, criterion, scaler, device, epoch, run_context=context_name)
         scheduler.step()
@@ -812,9 +855,9 @@ def run_experiment_all(
 
         # if wandb_run: wandb.log({f"{class_name}/learning_rate": current_lr, "epoch": epoch})
         # Validation and potential early stopping
-        if epoch % args.val_epochs == 0 or epoch == args.epochs:
-            val_loss = validate_epoch(args, model, val_loader, criterion, device, epoch, run_context=context_name)
-            logger.info(f"Epoch {epoch}/{args.epochs} LR {current_lr} => Context: {context_name}, Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}")
+        if epoch % class_args.val_epochs == 0 or epoch == class_args.epochs:
+            val_loss = validate_epoch(class_args, model, val_loader, criterion, device, epoch, run_context=context_name)
+            logger.info(f"Epoch {epoch}/{class_args.epochs} LR {current_lr} => Context: {context_name}, Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}")
             # Use simplified keys for full dataset run in WandB logs
             log_dict = {
                 f"{context_name}/train_loss": train_loss,
@@ -824,11 +867,12 @@ def run_experiment_all(
             }
 
             logger.info(f"\n--- Running Evaluation for Full Dataset ({context_name}) at {epoch}---")
-            current_args_obj = args.obj
+            current_args_obj = class_args.obj
             for cls_name in list_categories:
-                args.obj = cls_name
-                _, _, test_data_loader = get_dataloader(args)
+                class_args.obj = cls_name
+                _, _, test_data_loader = get_dataloader(class_args)
                 eval_metrics = evaluate_performance(
+                    args=class_args,
                     model=model,
                     test_loader=test_data_loader,
                     epoch_number=epoch,
@@ -842,7 +886,7 @@ def run_experiment_all(
                     log_dict[f"{cls_name}/{metric_name}"] = metric_value
 
             # return args.obj
-            args.obj = current_args_obj
+            class_args.obj = current_args_obj
             if wandb_run:
                 wandb.log(log_dict, step=epoch)
 
@@ -869,7 +913,7 @@ def run_experiment_all(
     logger.info(f"Training finished for {context_name} run.")
 
     # --- Final Model Saving ---
-    final_model_path = current_save_dir / f"model_{context_name}_{args.model}_final.pt"
+    final_model_path = current_save_dir / f"model_{context_name}_{class_args.model}_final.pt"
     torch.save(model.state_dict(), final_model_path)
     logger.info(f"Saved final model for {context_name} run to {final_model_path}")
 
@@ -881,7 +925,7 @@ def run_experiment_all(
     else:
         logger.warning(f"Best model checkpoint not found. Using final model for {context_name} evaluation.")
 
-    eval_model = get_model(device) # Fresh instance
+    eval_model = get_model(args=class_args, device=device) # Fresh instance
     try:
         eval_model.load_state_dict(torch.load(load_path, map_location=device))
         logger.info(f"Successfully loaded model weights from {load_path}")
@@ -892,9 +936,10 @@ def run_experiment_all(
     logger.info(f"\n--- Running Final Evaluation for Full Dataset ({context_name}) ---")
     results = []
     for cls_name in list_categories:
-        args.obj = cls_name
-        _,_, test_data_loader = get_dataloader(args)
+        class_args.obj = cls_name
+        _,_, test_data_loader = get_dataloader(class_args)
         eval_metrics = evaluate_performance(
+            args=class_args,
             model=eval_model,
             test_loader=test_data_loader,
             epoch_number='final',
@@ -924,6 +969,16 @@ def run_experiment_all(
             wandb.summary[f"{cls_name}/best_val_loss"] = cls_results["best_val_loss"]
         results.append(cls_results)
 
+        if wandb_run and class_args.log_images and (current_save_dir / "eval_debug_final").exists():
+            try:
+                debug_img_folder = current_save_dir / "eval_debug_final"
+                img_paths = list(debug_img_folder.glob("debug_*.png"))
+                if img_paths:
+                    wandb.log({f"{cls_name}/debug_images": [wandb.Image(str(p)) for p in img_paths]})
+                    logger.info(f"Logged {len(img_paths)} debug images to WandB.")
+            except Exception as e:
+                logger.error(f"Failed to log debug images to WandB: {e}")
+
 
     # logger.info(results)
     end_time = time.time()
@@ -932,26 +987,40 @@ def run_experiment_all(
 
     return results
 
-
-if __name__ == "__main__":
-
-    # --- Global Setup ---
+def main():
     start_time_full_script = time.time()
-    args_save_dir = Path(args.save_dir)
-    run_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-
-    # Base directory for all runs initiated by this script execution
-    base_save_dir = Path(args_save_dir) / f"run_{run_timestamp}_{args.model}_{args.obj}_{args.loss_func}_{args.epochs}"
-    base_save_dir.mkdir(parents=True, exist_ok=True)
-    logger.info(f"Base save directory for this run: {base_save_dir}")
-
+    # --- Global Setup ---
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     logger.info(f"Using device: {device}")
     if device.type == 'cuda':
         logger.info(f"CUDA Device Name: {torch.cuda.get_device_name(0)}")
         logger.info(f"CUDA Capability: {torch.cuda.get_device_capability(0)}")
 
+    # wandb sweep setup
+    # --- Argument Parsing ---
+    parser = argparse.ArgumentParser(description="MVTec AD Training and Evaluation with ViTAD")
+    # Add arguments based on DEFAULT_CONFIG
+    for key, value in DEFAULT_CONFIG.items():
+        arg_type = type(value)
+        if isinstance(value, bool):
+            # Special handling for boolean flags
+             parser.add_argument(f'--{key}', action=argparse.BooleanOptionalAction, default=value)
+        elif isinstance(value, list):
+             parser.add_argument(f'--{key}', type=type(value[0]) if value else str, nargs='+', default=value)
+        else:
+            # Handle None default specifically if needed, otherwise standard type
+            parser.add_argument(f'--{key}', type=arg_type if value is not None else str, default=value)
 
+    # Parse arguments BEFORE initializing wandb
+    args = parser.parse_args()
+    args_save_dir = Path(args.save_dir)
+    run_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+
+    # Base directory for all runs initiated by this script execution
+    base_save_dir = Path(
+        args_save_dir) / f"run_{run_timestamp}_{args.model}_{args.obj}_{args.loss_func}_{args.epochs}"
+    base_save_dir.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Base save directory for this run: {base_save_dir}")
     # --- Wandb Initialization ---
     wandb_run = None
     # Determine wandb run name based on mode
@@ -967,22 +1036,33 @@ if __name__ == "__main__":
             run_identifier = args.obj if args.obj else 'unknown'
             run_name = f"{args.model}_{run_identifier}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
             wandb_run = wandb.init(
-                project=WANDB_PROJECT_NAME,
+                project=args.project,
                 name=run_name,
-                tags=WANDB_TAGS + [args.model, args.obj if args.obj else 'N/A'],
+                tags=args.tags + [args.model, args.obj if args.obj else 'N/A'],
                 notes=f"{args.notes} _ model {args.model} loss_func {args.loss_func}",
                 config=vars(args), # Log all arguments
                 dir=str(base_save_dir), # Set wandb log directory within the run's base dir
                 mode=wandb_mode, # online, offline, or disabled
-                settings=wandb.Settings(start_method="fork") # Use fork for better compatibility
+                settings=wandb.Settings(start_method="fork"), # Use fork for better compatibility
+                reinit=True,
             )
             logger.info(f"Wandb initialized. Mode: '{wandb_mode}'. Run name: {run_name}")
+
+            # --- IMPORTANT: Update args with sweep config ---
+            for key, value in wandb.config.items():
+                if hasattr(args, key):
+                    setattr(args, key, value)
+                else:
+                    logger.warning(f"Sweep config key '{key}' not found in script args, adding dynamically.")
+                    setattr(args, key, value)  # Or handle as needed
+
+            logger.info(f"Args updated with W&B sweep config: {vars(args)}")
+
         except Exception as e:
             logger.error(f"Error initializing Wandb: {e}. Wandb logging disabled for this execution.")
             wandb_run = None # Ensure it's None if init fails
     else:
         logger.info("Wandb logging is disabled (wandb_log=False or mode='disabled').")
-
 
     # --- Determine Experiment Mode ---
     all_results = []
@@ -1092,12 +1172,6 @@ if __name__ == "__main__":
                         aggregated_metrics[m].append(v)
                 completed_count += 1
                 total_time += time_s
-                # if experiment_mode == "all_separate":
-                #     for m, v in zip(summary_metrics, metric_values):
-                #         if not np.isnan(v):
-                #             aggregated_metrics[m].append(v)
-                #     completed_count += 1
-                #     total_time += time_s
             else:
                 error_msg = result.get('error', 'Unknown')
                 row = f"{context:<15} | {status:<10} | " + " | ".join(['N/A'.center(15)] * len(summary_metrics)) + f" | {'N/A':<10}"
@@ -1128,6 +1202,13 @@ if __name__ == "__main__":
                  wandb.summary["average/training_time_seconds"] = avg_time
                  wandb.summary["completed_classes"] = completed_count
                  wandb.summary["total_classes_run"] = len(classes_to_run)
+                 primary_metric_key = PRIMARY_KEY_METRIC
+                 if primary_metric_key in wandb.summary.keys():
+                     wandb.log({"sweep_metric": wandb.summary[primary_metric_key]})
+                     logger.info(
+                         f"Logged primary sweep metric '{primary_metric_key}': {wandb.summary[primary_metric_key]:.4f}")
+                 else:
+                     logger.warning(f"Primary sweep metric key '{primary_metric_key}' not found in summary.")
 
         elif experiment_mode == "all_separate" and completed_count == 0:
              logger.info("\nNo experiments completed successfully in 'all_separate' mode.")
@@ -1139,3 +1220,6 @@ if __name__ == "__main__":
         # Finish Wandb Run
         wandb.finish()
         logger.info("Wandb run finished.")
+
+if __name__ == "__main__":
+    main()
