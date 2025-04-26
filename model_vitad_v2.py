@@ -337,7 +337,6 @@ def _create_vit_encoder(variant: str, pretrained: bool = False, **kwargs) -> ViT
         try:
             _filter_fn = partial(checkpoint_filter_fn, interpolation='bilinear', antialias=True)
         except TypeError:
-            logger.warning("timm < 0.6.8 detected? Checkpoint filter function might not support 'antialias'. Using default bilinear.")
             _filter_fn = partial(checkpoint_filter_fn, interpolation='bilinear')
     else:
         _filter_fn = checkpoint_filter_fn

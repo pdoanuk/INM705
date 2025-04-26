@@ -19,14 +19,10 @@ parameters:
      values:
      - "ViTAD_Fusion_v2"
   lr:
-    distribution: log_uniform_values
-    min: 1e-5
-    max: 5e-3
+    values: [0.002, 0.0002, 0.0008]
 
   weight_decay:
-    distribution: log_uniform_values
-    min: 1e-6
-    max: 1e-3
+    values: [0.0001, 0.0002, 0.0004]
 
   batch_size:
     values: [ 8, 16, 32 ]
