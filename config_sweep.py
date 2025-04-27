@@ -24,7 +24,7 @@ DEFAULT_IMAGE_TO_VISUAL = [1, 5, 10, 15]
 mean_train = [0.485, 0.456, 0.406]
 std_train = [0.229, 0.224, 0.225]
 
-FULL_DATASET_IDENTIFIER = 'full'
+
 SINGLE_CLASS_MODE = "title" #
 ALL_CLASSES_SEPARATELY_MODE = "full" # all. full SINGLE_CLASS_NAME - SWEEP
 
@@ -44,22 +44,21 @@ DEFAULT_CONFIG = {
     'patch_size': 16, # Tunable - ViT parameter
     'model': 'ViTAD_Fusion_v2', # Tunable - Model variant ('VitDecoderExp', 'ViTAD_Fusion', 'ViTAD_Fusion_v2) Sweep
     'val_ratio': 0.2, # Validation split ratio (if applicable in dataset loading)
-    'run_mode': 'full', # full (train + evaluate), train, evaluate, sweep
-    'final_checkpoint_path': './path.pth', # If run_mode is set to evaluate, the final_checkpoint_path should be given
+
     # --- Training ---
     'epochs': 100, # Tunable
     'batch_size': 16, # Tunable 8, 16, 32
     'warmup_epochs': 2,
-    'val_epochs': 20,
+    'val_epochs': 10,
     'early_stopping_patience': 12,
 
     # --- Optimizer & Loss ---
     'optimizer': 'AdamW', # Tunable ('AdamW', 'Adam')
-    'lr': 2e-4*(16/8), # Maybe simplify default to 2e-4
-    'weight_decay': 1e-4*(16/8), # Tunable
+    'lr': 1e-4 * 16 / 8, # Maybe simplify default to 2e-4
+    'weight_decay': 1e-4, # Tunable
     'beta1': 0.9, # Tunable (Adam/AdamW param)
     'beta2': 0.999, # Tunable (Adam/AdamW param)
-    'loss_func': 'CosLoss', # Tunable ('L2Loss', 'CosLoss')
+    'loss_func': 'L2Loss', # Tunable ('L2Loss', 'CosLoss')
 
     # --- Evaluation & Debugging ---
     'use_adeval': True, # Use external AD-Eval library if available
@@ -69,11 +68,11 @@ DEFAULT_CONFIG = {
 
     # --- Logging & Saving ---
     'seed': 42,
-    'save_dir': './saved_results_final/', # Base directory for saving results
+    'save_dir': './saved_results_sweep/', # Base directory for saving results
     'wandb_log': True,
     'mode': "online",
     'project': "INM705 - EXP - SWEEP",
-    'tags': ["Default_config", "ViT-AD", "ViTAD"],
+    'tags': ["sweep", "ViT-AD", "ViTAD"],
     'notes': 'AdamW, LRScheduler Cosine - adeEval enable. Evaluate every val_epoch _ Separate classes VitDecoderExp',  # Notes about the run, verbose description [str]
     'log_comment': 'Test mnew metrics--- VitDecoderExp Full combined dataset, CosLoss,',  # Comment to add to name the local logging folder [str]
     'wandb_dir': './wandb_log',  # Direcotry to store the wandb file. CAREFUL: Directory must exists [str]

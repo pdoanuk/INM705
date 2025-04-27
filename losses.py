@@ -24,30 +24,6 @@ def create_window(window_size: int, channel: int = 1) -> torch.Tensor:
 
 # --- Loss Function Definitions ---
 
-class L1Loss(nn.Module):
-    """Compute the L1 loss"""
-    def __init__(self, lam: float = 1.0, reduction: str = 'mean'):
-        super().__init__()
-        self.loss_fn = nn.L1Loss(reduction=reduction)
-        self.lam = lam
-
-    def forward(self, input1: Union[torch.Tensor, List[torch.Tensor]],
-                input2: Union[torch.Tensor, List[torch.Tensor]]) -> torch.Tensor:
-        input1_list = input1 if isinstance(input1, list) else [input1]
-        input2_list = input2 if isinstance(input2, list) else [input2]
-
-        total_loss = 0.0
-        num_items = len(input1_list)
-        if num_items == 0:
-            return torch.tensor(0.0, device=input1[0].device if isinstance(input1, list) and input1 else (
-                input1.device if torch.is_tensor(input1) else 'cpu'))  # Handle empty lists
-
-        for in1, in2 in zip(input1_list, input2_list):
-            total_loss += self.loss_fn(in1, in2)
-
-        return total_loss * self.lam
-
-
 class L2Loss(nn.Module):
     """ Compute the L2 (MSE) loss """
 
@@ -70,7 +46,7 @@ class L2Loss(nn.Module):
         for in1, in2 in zip(input1_list, input2_list):
             total_loss += self.loss_fn(in1, in2)
 
-        # if reduction == 'mean': total_loss = total_loss / num_items # Optional: force average over list items
+        # if reduction == 'mean': total_loss = total_loss / num_items
 
         return total_loss * self.lam
 
@@ -109,6 +85,7 @@ class CosLoss(nn.Module):
             total_loss += loss_per_pair * self.lam
 
         return total_loss / num_items if self.avg and num_items > 0 else total_loss
+
 
 
 class WarmCosineScheduler(_LRScheduler):

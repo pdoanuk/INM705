@@ -1,5 +1,3 @@
-# --- START OF FILE metric.py ---
-
 import time
 import multiprocessing
 import copy
