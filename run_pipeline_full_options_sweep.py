@@ -68,7 +68,7 @@ def get_model(args: argparse.Namespace ,device: torch.device) -> nn.Module:
     if args.model == "ViTAD_Fusion":
         model = load_default_model().to(device)
     elif args.model == "ViTAD_Fusion_v2":
-        model = load_default_model().to(device)
+        model = load_default_vitad_model().to(device)
     elif args.model == "VitDecoderExp":
         model = VitDecoderExp().to(device)
     else:
