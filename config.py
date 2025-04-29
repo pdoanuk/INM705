@@ -45,7 +45,7 @@ DEFAULT_CONFIG = {
     'model': 'ViTAD_Fusion_v2', # Tunable - Model variant ('VitDecoderExp', 'ViTAD_Fusion', 'ViTAD_Fusion_v2) Sweep
     'val_ratio': 0.2, # Validation split ratio (if applicable in dataset loading)
     'run_mode': 'full', # full (train + evaluate), train, evaluate, sweep
-    'final_checkpoint_path': './path.pth', # If run_mode is set to evaluate, the final_checkpoint_path should be given
+    'final_checkpoint_path': '', # If run_mode is set to evaluate, the final_checkpoint_path should be given
     # --- Training ---
     'epochs': 100, # Tunable
     'batch_size': 16, # Tunable 8, 16, 32
