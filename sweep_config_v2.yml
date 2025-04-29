@@ -6,29 +6,28 @@ metric:
 parameters:
   loss_func:
     distribution: categorical
-    values:
-    - "L2Loss"
+    value:
     - "CosLoss" # Test different loss functions
   optimizer:
     distribution: categorical
-    values:
+    value:
       - "AdamW"
-      - "Adam" # Test different loss functions
   model:
      distribution: categorical
      values:
      - "ViTAD_Fusion_v2"
+     - "ViTAD_Fusion"
   lr:
-    values: [0.002, 0.0002, 0.0008]
+    values: [0.0001, 0.0002, 0.0008, 0.0016]
 
   weight_decay:
-    values: [0.0001, 0.0002, 0.0004]
+    values: [0.0001, 0.0002, 0.0004, 0.00001]
 
   batch_size:
-    values: [ 8, 16, 32 ]
+    values: [ 16, 32 ]
 
   epochs:
     value: 100
   val_epochs:
-    value: 20
+    value: 25
 

@@ -772,11 +772,13 @@ def run_experiment_all(
         base_save_dir: Path,
         device: torch.device,
         wandb_run: Optional[wandb.sdk.wandb_run.Run] = None,
-        list_categories: Optional[List[str]] = None  # Allow specifying categories, default to all
+        list_categories: Optional[List[str]] = None,  # Allow specifying categories, default to all
+        is_evaluation: bool = False,
 ) -> Union[dict[str, str], dict[str, str], list[dict[str, Union[Union[str, float, dict[str, float], None], Any]]]]:
     """Runs the full training and evaluation pipeline on the combined dataset.
 
     Args:
+        is_evaluation:
         args:
         base_save_dir:
         device:
@@ -820,18 +822,6 @@ def run_experiment_all(
     model = get_model(args=class_args, device=device)
     optimizer = get_optimizer(args=class_args, model=model)
     criterion = get_criterion(args=class_args).to(device=device)
-    # criterion = L2Loss().to(device)
-    # if args.loss_func == "L2Loss":
-    #     criterion = L2Loss().to(device) # Ensure loss is on the correct device
-    # elif args.loss_func == "CosLoss":
-    #     criterion = CosLoss().to(device)
-    # elif args.loss_func == "KLLoss":
-    #     criterion = KLLoss().to(device)
-    # else:
-    #     logger.info(f"{args.loss_func} was not supported yet, using default L2Loss")
-    #     args.loss_func =  "L2Loss"
-    #     criterion = L2Loss().to(device) # Ensure loss is on the correct device
-
     logger.info(f"Loss function: {class_args.loss_func}")
     scaler = amp.GradScaler(enabled=class_args.amp)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=class_args.epochs, eta_min=1e-6)
@@ -849,87 +839,91 @@ def run_experiment_all(
     epochs_without_improvement = 0
     best_model_path = current_save_dir / f"model_{context_name}_{class_args.model}_best.pt"
     all_metrics = {}  # To store metrics from the last evaluation
+    if not is_evaluation:
+        logger.info(f"Starting training on combined dataset for {class_args.epochs} epochs...")
+        for epoch in range(1, class_args.epochs + 1):
+            # Pass context_name to training functions
+            train_loss = train_epoch(class_args, model, train_loader, optimizer, criterion, scaler, device, epoch,
+                                     run_context=context_name)
+            scheduler.step()
+            current_lr = scheduler.get_last_lr()[0]
 
-    logger.info(f"Starting training on combined dataset for {class_args.epochs} epochs...")
-    for epoch in range(1, class_args.epochs + 1):
-        # Pass context_name to training functions
-        train_loss = train_epoch(class_args, model, train_loader, optimizer, criterion, scaler, device, epoch,
-                                 run_context=context_name)
-        scheduler.step()
-        current_lr = scheduler.get_last_lr()[0]
+            # if wandb_run: wandb.log({f"{class_name}/learning_rate": current_lr, "epoch": epoch})
+            # Validation and potential early stopping
+            if epoch % class_args.val_epochs == 0 or epoch == class_args.epochs:
+                val_loss = validate_epoch(class_args, model, val_loader, criterion, device, epoch, run_context=context_name)
+                logger.info(
+                    f"Epoch {epoch}/{class_args.epochs} LR {current_lr} => Context: {context_name}, Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}")
+                # Use simplified keys for full dataset run in WandB logs
+                log_dict = {
+                    f"{context_name}/train_loss": train_loss,
+                    f"{context_name}/val_loss": val_loss,
+                    f"{context_name}/learning_rate": current_lr,
+                    "epoch": epoch
+                }
 
-        # if wandb_run: wandb.log({f"{class_name}/learning_rate": current_lr, "epoch": epoch})
-        # Validation and potential early stopping
-        if epoch % class_args.val_epochs == 0 or epoch == class_args.epochs:
-            val_loss = validate_epoch(class_args, model, val_loader, criterion, device, epoch, run_context=context_name)
-            logger.info(
-                f"Epoch {epoch}/{class_args.epochs} LR {current_lr} => Context: {context_name}, Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}")
-            # Use simplified keys for full dataset run in WandB logs
-            log_dict = {
-                f"{context_name}/train_loss": train_loss,
-                f"{context_name}/val_loss": val_loss,
-                f"{context_name}/learning_rate": current_lr,
-                "epoch": epoch
-            }
+                logger.info(f"\n--- Running Evaluation for Full Dataset ({context_name}) at {epoch}---")
+                current_args_obj = class_args.obj
+                for cls_name in list_categories:
+                    class_args.obj = cls_name
+                    _, _, test_data_loader = get_dataloader(class_args)
+                    eval_metrics = evaluate_performance(
+                        args=class_args,
+                        model=model,
+                        test_loader=test_data_loader,
+                        epoch_number=epoch,
+                        device=device,
+                        save_dir=current_save_dir / "eval_debug_final",
+                        run_context=cls_name,  # Pass 'full' context
+                        evaluator=evaluator,
+                        debug_image_indices=DEFAULT_IMAGE_TO_VISUAL
+                    )
+                    for metric_name, metric_value in eval_metrics.items():
+                        log_dict[f"{cls_name}/{metric_name}"] = metric_value
 
-            logger.info(f"\n--- Running Evaluation for Full Dataset ({context_name}) at {epoch}---")
-            current_args_obj = class_args.obj
-            for cls_name in list_categories:
-                class_args.obj = cls_name
-                _, _, test_data_loader = get_dataloader(class_args)
-                eval_metrics = evaluate_performance(
-                    args=class_args,
-                    model=model,
-                    test_loader=test_data_loader,
-                    epoch_number=epoch,
-                    device=device,
-                    save_dir=current_save_dir / "eval_debug_final",
-                    run_context=cls_name,  # Pass 'full' context
-                    evaluator=evaluator,
-                    debug_image_indices=DEFAULT_IMAGE_TO_VISUAL
-                )
-                for metric_name, metric_value in eval_metrics.items():
-                    log_dict[f"{cls_name}/{metric_name}"] = metric_value
+                # return args.obj
+                class_args.obj = current_args_obj
+                if wandb_run:
+                    wandb.log(log_dict, step=epoch)
 
-            # return args.obj
-            class_args.obj = current_args_obj
-            if wandb_run:
-                wandb.log(log_dict, step=epoch)
+                ## Early stop is not employed for now
+                # if val_loss < best_val_loss:
+                #     best_val_loss = val_loss
+                #     epochs_without_improvement = 0
+                #     torch.save(model.state_dict(), best_model_path)
+                #     logger.info(f"Validation loss improved to {val_loss:.6f}. Saved best model to {best_model_path}")
+                # else:
+                #     epochs_without_improvement += args.val_epochs
 
-            ## Early stop is not employed for now
-            # if val_loss < best_val_loss:
-            #     best_val_loss = val_loss
-            #     epochs_without_improvement = 0
-            #     torch.save(model.state_dict(), best_model_path)
-            #     logger.info(f"Validation loss improved to {val_loss:.6f}. Saved best model to {best_model_path}")
-            # else:
-            #     epochs_without_improvement += args.val_epochs
+                # if args.early_stopping_patience > 0 and epochs_without_improvement >= args.early_stopping_patience:
+                #     logger.info(f"Early stopping triggered for {context_name} run after {epoch} epochs.")
+                #     break
+            else:
+                # Log only training loss if not a validation epoch
+                log_dict = {f"{context_name}/train_loss": train_loss,
+                            f"{context_name}/learning_rate": current_lr,
+                            "epoch": epoch}
+                if wandb_run:
+                    wandb.log(log_dict, step=epoch)
 
-            # if args.early_stopping_patience > 0 and epochs_without_improvement >= args.early_stopping_patience:
-            #     logger.info(f"Early stopping triggered for {context_name} run after {epoch} epochs.")
-            #     break
-        else:
-            # Log only training loss if not a validation epoch
-            log_dict = {f"{context_name}/train_loss": train_loss,
-                        f"{context_name}/learning_rate": current_lr,
-                        "epoch": epoch}
-            if wandb_run:
-                wandb.log(log_dict, step=epoch)
-
-    logger.info(f"Training finished for {context_name} run.")
-
-    # --- Final Model Saving ---
-    final_model_path = current_save_dir / f"model_{context_name}_{class_args.model}_final.pt"
-    torch.save(model.state_dict(), final_model_path)
-    logger.info(f"Saved final model for {context_name} run to {final_model_path}")
+        logger.info(f"Training finished for {context_name} run.")
+        # --- Final Model Saving ---
+        final_model_path = current_save_dir / f"model_{context_name}_{class_args.model}_final.pt"
+        torch.save(model.state_dict(), final_model_path)
+        logger.info(f"Saved final model for {context_name} run to {final_model_path}")
+    else:
+        logging.info("\n" + "=" * 50 + "\n")
+        logging.info(f"EVALUATION ONLY::::")
+        final_model_path = class_args.final_checkpoint_path
 
     # --- Final Evaluation ---
     load_path = final_model_path
-    if best_model_path.exists():
-        logger.info(f"Loading best model from {best_model_path} for final evaluation...")
-        load_path = best_model_path
-    else:
-        logger.warning(f"Best model checkpoint not found. Using final model for {context_name} evaluation.")
+    if not is_evaluation:
+        if best_model_path.exists():
+            logger.info(f"Loading best model from {best_model_path} for final evaluation...")
+            load_path = best_model_path
+        else:
+            logger.warning(f"Best model checkpoint not found. Using final model for {context_name} evaluation.")
 
     eval_model = get_model(args=class_args, device=device)  # Fresh instance
     try:
@@ -1022,6 +1016,7 @@ def main():
     args_save_dir = Path(args.save_dir)
     run_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     run_mode = args.run_mode  # get run mode value
+    checkpoint_file_path = args.final_checkpoint_path if os.path.exists(args.final_checkpoint_path) else None
     print(f"Args data \n"
           f"{args}")
     print(f"run_ mode : {run_mode}")
@@ -1035,6 +1030,7 @@ def main():
         args_save_dir) / f"run_{run_timestamp}_{args.model}_{args.obj}_{args.loss_func}_{args.epochs}"
     base_save_dir.mkdir(parents=True, exist_ok=True)
     logger.info(f"Base save directory for this run: {base_save_dir}")
+    report_save_dir = base_save_dir
     # --- Wandb Initialization ---
     wandb_run = None
     # Determine wandb run name based on mode
@@ -1114,7 +1110,8 @@ def main():
                     base_save_dir=base_save_dir,
                     device=device,
                     wandb_run=wandb_run,
-                    list_categories=CLASS_NAMES  # Use all classes from CLASS_NAMES by default
+                    list_categories=CLASS_NAMES, # Use all classes from CLASS_NAMES by default
+                    is_evaluation=False
                 )
                 all_results = full_results
             except Exception as e:
@@ -1166,6 +1163,7 @@ def main():
             for result in all_results:
                 status = result['status']
                 context = result['class']
+                report_save_dir = result['save_dir']
                 time_s = result.get('training_time_seconds', 0)
 
                 if status == 'completed':
@@ -1240,13 +1238,138 @@ def main():
             elif experiment_mode == "all_separate" and completed_count == 0:
                 logger.info("\nNo experiments completed successfully in 'all_separate' mode.")
 
+    elif run_mode.lower() == "evaluate" and checkpoint_file_path:
+        # Evaluation mode only support with Full all-classes combined dataset.
+        logger.info(f"Perform {run_mode} run with {checkpoint_file_path} and {args.obj} mode")
+        if args.obj == FULL_DATASET_IDENTIFIER:  # Run all classes as a whole dataset, e.g in one run
+            logger.info(f"Experiment Mode: Running EVALUATION experiment on the FULL combined MVTec AD dataset.")
+            experiment_mode = "full_combined_EVALUATION"
+            try:
+                full_results = run_experiment_all(
+                    args=args,
+                    base_save_dir=base_save_dir,
+                    device=device,
+                    wandb_run=wandb_run,
+                    list_categories=CLASS_NAMES,  # Use all classes from CLASS_NAMES by default
+                    is_evaluation = True,
+                )
+                all_results = full_results
+            except Exception as e:
+                logger.error(f"An unexpected error occurred during the 'full_combined' execution: {e}", exc_info=True)
+
+        else:
+            logger.error(f"Error: Invalid value for --obj argument: '{args.obj}'.")
+            if wandb_run: wandb.finish(exit_code=1)  # Exit wandb run with error code
+            sys.exit(1)
+
+        # --- Final Summary ---
+        logger.info("\n" + "=" * 80)
+        logger.info(f" Overall Results Summary (Mode: {experiment_mode})")
+        logger.info("=" * 80)
+
+        if not all_results:
+            logger.warning("No results were generated.")
+        else:
+            summary_metrics = METRICS_TO_COMPUTE
+            header = f"{'Context/Class':<15} | {'Status':<10} | " + " | ".join(
+                [f'{m:<15}' for m in summary_metrics]) + f" | {'Time (s)':<10}"
+            logger.info(header)
+            logger.info("-" * len(header))
+
+            # Aggregated metrics (only relevant for 'all_separate' mode)
+            aggregated_metrics = {m: [] for m in summary_metrics}
+            completed_count = 0
+            total_time = 0.0
+
+            for result in all_results:
+                status = result['status']
+                context = result['class']
+                report_save_dir = result['save_dir']
+                time_s = result.get('training_time_seconds', 0)
+
+                if status == 'completed':
+                    metrics = result.get('metrics', {})  # Metrics dict from evaluation
+                    metric_values = [metrics.get(m, np.nan) for m in summary_metrics]  # Get values, use NaN if missing
+
+                    # Format metric values for display
+                    metric_strings = []
+                    for v in metric_values:
+                        if isinstance(v, (float, np.floating)) and not np.isnan(v):
+                            metric_strings.append(f'{v:.4f}')
+                        else:
+                            metric_strings.append('N/A')  # Handle NaN or missing
+
+                    row = f"{context:<15} | {status:<10} | " + " | ".join(
+                        [f'{s:<15}' for s in metric_strings]) + f" | {time_s:<10.2f}"
+                    logger.info(row)
+
+                    # Add to aggregation only if running separate classes
+                    for m, v in zip(summary_metrics, metric_values):
+                        if not np.isnan(v):
+                            aggregated_metrics[m].append(v)
+                    completed_count += 1
+                    total_time += time_s
+                else:
+                    error_msg = result.get('error', 'Unknown')
+                    row = f"{context:<15} | {status:<10} | " + " | ".join(
+                        ['N/A'.center(15)] * len(summary_metrics)) + f" | {'N/A':<10}"
+                    logger.info(row)
+                    logger.warning(f"  -> Failed Run '{context}' Reason: {error_msg}")
+
+            # Display average only if multiple separate classes were run successfully
+            # if experiment_mode == "all_separate" and completed_count > 0:
+            if completed_count > 0:
+                avg_metrics = {m: np.mean(vals) for m, vals in aggregated_metrics.items() if vals}
+                avg_metric_values = [avg_metrics.get(m, np.nan) for m in summary_metrics]
+                avg_time = total_time / completed_count
+
+                avg_metric_strings = []
+                for v in avg_metric_values:
+                    if not np.isnan(v):
+                        avg_metric_strings.append(f'{v:.4f}')
+                    else:
+                        avg_metric_strings.append('N/A')
+
+                logger.info("-" * len(header))
+                avg_row = f"{'Average':<15} | {'':<10} | " + " | ".join(
+                    [f'{s:<15}' for s in avg_metric_strings]) + f" | {avg_time:<10.2f}"
+                logger.info(avg_row)
+                logger.info("=" * len(header))
+
+                # Log average metrics to WandB Summary if running all separate
+                if wandb_run:
+                    for m, v in avg_metrics.items():
+                        wandb.summary[f"average/{m}"] = v
+                    wandb.summary["average/training_time_seconds"] = avg_time
+                    wandb.summary["completed_classes"] = completed_count
+                    wandb.summary["total_classes_run"] = len(classes_to_run)
+                    if run_mode == "sweep":
+                        # logging if it is a sweep run
+                        logger.info(f"{run_mode} ... starting logging sweep metric, if any")
+                        primary_metric_key = PRIMARY_KEY_METRIC
+                        if primary_metric_key in wandb.summary.keys():
+                            wandb.log({"sweep_metric": wandb.summary[primary_metric_key]})
+                            logger.info(
+                                f"Logged primary sweep metric '{primary_metric_key}': {wandb.summary[primary_metric_key]:.4f}")
+                        else:
+                            logger.warning(f"Primary sweep metric key '{primary_metric_key}' not found in summary.")
+                    else:
+                        logger.info(f"No sweep metric should be logged. Finish with {run_mode} run.")
+
+            elif experiment_mode == "all_separate" and completed_count == 0:
+                logger.info("\nNo experiments completed successfully in 'all_separate' mode.")
     else:
-        # if it is an evaluate run
-        logger.info(f"Run mode is {run_mode}")
+        logger.info(f"Oops! "
+                    f"\n Running mode was set {run_mode}."
+                    f"\n Obj was set {args.obj}"
+                    f"\n Checkpoint path is {args.final_checkpoint_path} which is {checkpoint_file_path}"
+                    f"\n Please check again.")
 
     total_duration_script = time.time() - start_time_full_script
     logger.info(
         f"\nTotal script execution time: {total_duration_script:.2f} seconds ({total_duration_script / 60:.2f} minutes).")
+    logger.info(f"Report save dir: {report_save_dir}")
+    logger.info(f"Debug images saved in: {report_save_dir}/eval_debug_final/")
     if wandb_run:
         wandb.summary["total_script_duration_seconds"] = total_duration_script
         # Finish Wandb Run

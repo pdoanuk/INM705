@@ -178,7 +178,7 @@ class Evaluator(object):
             t0 = time.time()
             try:
                 if metric == 'mAUROC_sp_max':
-                    if self.use_adeval and 'i_auroc' in adeval_metrics:
+                    if self.use_adeval and 'i_auroc' in adeval_metrics: #image-level
                         metric_results[metric] = adeval_metrics['i_auroc']
                     elif len(np.unique(gt_sp)) > 1:
                         metric_results[metric] = roc_auc_score(gt_sp, pr_sp_max)
@@ -199,7 +199,7 @@ class Evaluator(object):
                           logger.warning(f"Skipping {metric} for {cls_name}: Missing sample predictions or only one class.")
 
                 elif metric == 'mAUROC_px':
-                    if self.use_adeval and 'p_auroc' in adeval_metrics:
+                    if self.use_adeval and 'p_auroc' in adeval_metrics: #pixel level
                         metric_results[metric] = adeval_metrics['p_auroc']
                     else:
                          # Ensure mask has variance
