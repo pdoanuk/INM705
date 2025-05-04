@@ -1,3 +1,11 @@
+# -*- coding: utf-8 -*-
+## TIMESTAMP @ 2025-04-23T09:00:45
+## author: phuocddat
+
+# ATTRIBUTION NOTICE:
+# Portions of this code are adapted from or reference the following sources:
+# - ViTAD / ADer: https://github.com/zhangzjn/ADer/
+# Significant modifications and original code added by phuocddat.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

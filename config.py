@@ -38,7 +38,7 @@ DEFAULT_CONFIG = {
     'amp': True, # Mixed precision
 
     # --- Data & Model ---
-    'dataset_path': '/home/phuocddat/git-repo/cv/ADer/data/mvtec',
+    'dataset_path': './data/mvtec',
     'obj': ALL_CLASSES_SEPARATELY_MODE, # Default: run all classes separately
     'image_size': 256,
     'patch_size': 16, # Tunable - ViT parameter
@@ -72,10 +72,10 @@ DEFAULT_CONFIG = {
     'save_dir': './saved_results_final/', # Base directory for saving results
     'wandb_log': True,
     'mode': "online",
-    'project': "INM705 - EXP - SWEEP",
-    'tags': ["Default_config", "ViT-AD", "ViTAD"],
-    'notes': 'AdamW, LRScheduler Cosine - adeEval enable. Evaluate every val_epoch _ Separate classes VitDecoderExp',  # Notes about the run, verbose description [str]
-    'log_comment': 'Test mnew metrics--- VitDecoderExp Full combined dataset, CosLoss,',  # Comment to add to name the local logging folder [str]
+    'project': "INM705 - EXP",
+    'tags': ["Default_config", "ViT-AD", "ViTAD", "vit_small_patch16_224_1k"],
+    'notes': 'AdamW, LRScheduler Cosine - adeEval enable.',  # Notes about the run, verbose description [str]
+    'log_comment': 'ViTAD_v2 vit_small_patch16_224_1k encoder no DINO. Full combined dataset, CosLoss,',  # Comment to add to name the local logging folder [str]
     'wandb_dir': './wandb_log',  # Direcotry to store the wandb file. CAREFUL: Directory must exists [str]
     'log_dir': './logdir',  # Direcotry to store all logging related files and outputs [str]
     'level': 'info',  # Level of logging must be either ["critical", "error", "warning", "info", "debug"] [str]
