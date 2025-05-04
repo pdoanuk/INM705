@@ -38,7 +38,7 @@ DEFAULT_CONFIG = {
     'amp': True, # Mixed precision
 
     # --- Data & Model ---
-    'dataset_path': '/home/phuocddat/git-repo/cv/ADer/data/mvtec',
+    'dataset_path': './data/mvtec',
     'obj': ALL_CLASSES_SEPARATELY_MODE, # Default: run all classes separately
     'image_size': 256,
     'patch_size': 16, # Tunable - ViT parameter
