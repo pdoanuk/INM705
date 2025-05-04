@@ -4,9 +4,7 @@ INM705 - Image analysis
 Instruction:
 - Setup environment. (Pytho=3.9, Torch 2.1.2)
 - To install all dependencies:
-  ```python
-pip install -r ./requirements_inm705_pkgs.txt
-    ```
+  `pip install -r ./requirements_inm705_pkgs.txt`
 - Download data & model weights at: https://drive.google.com/drive/folders/1EvFuqJdnuOYwRGZ-ymwBktcV8zRSu7D9?usp=drive_link
 - Following instruction to run program;
 - Train command:
