@@ -408,21 +408,28 @@ def _create_vit_decoder(base_kwargs: Dict[str, Any], **kwargs) -> ViTDecoder:
 
 
 # --- Encoders ---
+# DINO SMALL
 def vit_small_patch16_224_dino(pretrained=True, **kwargs) -> ViTEncoder:
     model_kwargs = dict(patch_size=16, embed_dim=384, depth=12, num_heads=6)
     model_kwargs.update(kwargs)
     return _create_vit_encoder('vit_small_patch16_224.dino', pretrained=pretrained, **model_kwargs)
-
+# NORMAL SMALL
+def vit_small_patch16_224_1k(pretrained=True, **kwargs):
+    model_kwargs = dict(patch_size=16, embed_dim=384, depth=12, num_heads=6)
+    model_kwargs.update(kwargs)
+    return _create_vit_encoder('vit_small_patch16_224.augreg_in1k', pretrained=pretrained, **model_kwargs)
+# NORMAL BASE
 def vit_base_patch16_224(pretrained=True, **kwargs) -> ViTEncoder:
     model_kwargs = dict(patch_size=16, embed_dim=768, depth=12, num_heads=12)
     model_kwargs.update(kwargs)
     return _create_vit_encoder('vit_base_patch16_224.augreg_in21k_ft_in1k', pretrained=pretrained, **model_kwargs)
 
+
 # --- Decoders ---
 def de_vit_small_patch16_base(
     img_size: int,
     patch_size: int = 16,
-    depth: int = 6, # Example depth, configure as needed
+    depth: int = 6,
     student_layer_indices: Optional[List[int]] = None,
     **kwargs
 ) -> ViTDecoder:
@@ -432,6 +439,30 @@ def de_vit_small_patch16_base(
         patch_size=patch_size,
         embed_dim=384, # Matches vit_small embed_dim
         num_heads=6, # Matches vit_small num_heads
+        mlp_ratio=4.0,
+        qkv_bias=True,
+        norm_layer=partial(nn.LayerNorm, eps=1e-6),
+        student_layer_indices=student_layer_indices if student_layer_indices is not None else []
+    )
+    # Override defaults and add depth
+    base_kwargs.update(kwargs)
+    base_kwargs['depth'] = depth
+    return _create_vit_decoder(base_kwargs)
+
+# Decoder base
+def de_vit_base_patch16(
+    img_size: int,
+    patch_size: int = 16,
+    depth: int = 6,
+    student_layer_indices: Optional[List[int]] = None,
+    **kwargs
+) -> ViTDecoder:
+    """ Base configuration for a 'small' ViT decoder. """
+    base_kwargs = dict(
+        img_size=img_size,
+        patch_size=patch_size,
+        embed_dim=768, # Matches vit_base embed dim
+        num_heads=12, # Matches vit_base num_heads
         mlp_ratio=4.0,
         qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6),
@@ -453,9 +484,11 @@ MODEL_CREATORS: Dict[str, callable] = {
     'fusion': fusion_module,
     # Encoders (add more timm variants or custom ones here)
     'vit_small_patch16_224_dino': vit_small_patch16_224_dino,
+    'vit_small_patch16_224_1k': vit_small_patch16_224_1k,
     'vit_base_patch16_224': vit_base_patch16_224,
     # Decoders (define configurations as needed)
     'de_vit_small_patch16_base': de_vit_small_patch16_base,
+    'de_vit_base_patch16': de_vit_base_patch16,
 
 }
 
@@ -714,7 +747,7 @@ def load_default_vitad_model(device: Optional[Union[str, torch.device]] = None) 
 
     # --- Configuration Dictionaries ---
     model_t_cfg = {
-        'name': 'vit_small_patch16_224_dino',
+        'name': 'vit_small_patch16_224_1k', # vit_small_patch16_224_1k vit_small_patch16_224_dino
         'kwargs': dict(
             pretrained=True,
             checkpoint_path='',
