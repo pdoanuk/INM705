@@ -1,3 +1,13 @@
+# -*- coding: utf-8 -*-
+## TIMESTAMP @ 2025-04-23T09:00:45
+## author: phuocddat
+
+# ATTRIBUTION NOTICE:
+# Portions of this code are adapted from or reference the following sources:
+# - ViTAD / ADer: https://github.com/zhangzjn/ADer/blob/main/util/metric.py
+# - Timm library: https://github.com/huggingface/pytorch-image-models
+# Significant modifications and original code added by phuocddat.
+
 import time
 import multiprocessing
 import copy
